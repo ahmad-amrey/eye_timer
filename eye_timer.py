@@ -53,7 +53,7 @@ def set_macos_accessory_activation_policy() -> None:
 set_windows_app_id()
 
 try:
-    from PySide6.QtCore import QPoint, QRectF, Qt, QTimer
+    from PySide6.QtCore import QPoint, Qt, QTimer
     from PySide6.QtGui import (
         QAction,
         QColor,
@@ -63,7 +63,6 @@ try:
         QMouseEvent,
         QPaintEvent,
         QPainter,
-        QPen,
         QScreen,
     )
     from PySide6.QtWidgets import (
@@ -102,12 +101,8 @@ QWidget {{
 }}
 
 QWidget#countdownWindow {{
-    background-color: transparent;
-}}
-
-QFrame#countdownPill {{
-    background: transparent;
-    border: 0;
+    background: {PANEL_BG};
+    border: 1px solid #4a4a4a;
 }}
 
 QLabel#countdownText {{
@@ -198,7 +193,7 @@ QPushButton#secondaryButton:hover {{
 QPushButton#countdownHideButton {{
     background: #252525;
     color: {MUTED_TEXT};
-    border-radius: 13px;
+    border-radius: 0;
     padding: 0;
     min-width: 26px;
     max-width: 26px;
@@ -429,92 +424,6 @@ def set_native_windows_window_icon(widget: QWidget) -> None:
         pass
 
 
-def hide_native_windows_window_chrome(widget: QWidget) -> None:
-    if platform.system().lower() != "windows":
-        return
-
-    try:
-        hwnd = ctypes.c_void_p(int(widget.winId()))
-
-        user32 = ctypes.windll.user32
-        get_window_long_ptr = getattr(user32, "GetWindowLongPtrW", user32.GetWindowLongW)
-        set_window_long_ptr = getattr(user32, "SetWindowLongPtrW", user32.SetWindowLongW)
-        get_window_long_ptr.argtypes = [ctypes.c_void_p, ctypes.c_int]
-        get_window_long_ptr.restype = ctypes.c_ssize_t
-        set_window_long_ptr.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_ssize_t]
-        set_window_long_ptr.restype = ctypes.c_ssize_t
-        user32.SetWindowPos.argtypes = [
-            ctypes.c_void_p,
-            ctypes.c_void_p,
-            ctypes.c_int,
-            ctypes.c_int,
-            ctypes.c_int,
-            ctypes.c_int,
-            ctypes.c_uint,
-        ]
-        user32.SetWindowPos.restype = ctypes.c_bool
-        gwl_style = -16
-        gwl_exstyle = -20
-        ws_caption = 0x00C00000
-        ws_thickframe = 0x00040000
-        ws_ex_dlgmodalframe = 0x00000001
-        ws_ex_windowedge = 0x00000100
-        ws_ex_clientedge = 0x00000200
-        ws_ex_staticedge = 0x00020000
-        swp_nosize = 0x0001
-        swp_nomove = 0x0002
-        swp_nozorder = 0x0004
-        swp_noactivate = 0x0010
-        swp_framechanged = 0x0020
-
-        style = get_window_long_ptr(hwnd, gwl_style)
-        style &= ~(ws_caption | ws_thickframe)
-        set_window_long_ptr(hwnd, gwl_style, style)
-
-        exstyle = get_window_long_ptr(hwnd, gwl_exstyle)
-        exstyle &= ~(ws_ex_dlgmodalframe | ws_ex_windowedge | ws_ex_clientedge | ws_ex_staticedge)
-        set_window_long_ptr(hwnd, gwl_exstyle, exstyle)
-
-        user32.SetWindowPos(
-            hwnd,
-            None,
-            0,
-            0,
-            0,
-            0,
-            swp_nosize | swp_nomove | swp_nozorder | swp_noactivate | swp_framechanged,
-        )
-
-        dwmapi = ctypes.windll.dwmapi
-        dwmapi.DwmSetWindowAttribute.argtypes = [
-            ctypes.c_void_p,
-            ctypes.c_uint,
-            ctypes.c_void_p,
-            ctypes.c_uint,
-        ]
-        dwmapi.DwmSetWindowAttribute.restype = ctypes.c_long
-
-        nc_rendering_policy_attribute = 2
-        dwm_nc_rendering_disabled = ctypes.c_uint(1)
-        dwmapi.DwmSetWindowAttribute(
-            hwnd,
-            nc_rendering_policy_attribute,
-            ctypes.byref(dwm_nc_rendering_disabled),
-            ctypes.sizeof(dwm_nc_rendering_disabled),
-        )
-
-        border_color_attribute = 34
-        color_none = ctypes.c_uint(0xFFFFFFFE)
-        dwmapi.DwmSetWindowAttribute(
-            hwnd,
-            border_color_attribute,
-            ctypes.byref(color_none),
-            ctypes.sizeof(color_none),
-        )
-    except Exception:
-        pass
-
-
 class CountdownWindow(QWidget):
     def __init__(self, controller: EyeTimerApp) -> None:
         super().__init__()
@@ -523,47 +432,32 @@ class CountdownWindow(QWidget):
         self.setObjectName("countdownWindow")
         self.setWindowTitle("Eye Timer countdown")
         self.setWindowIcon(controller.app_icon)
-        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         window_kind = Qt.WindowType.Tool if controller.tray_available else Qt.WindowType.Window
-        window_flags = (
+        self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
-            | Qt.WindowType.NoDropShadowWindowHint
             | window_kind
         )
-        if platform.system().lower() == "windows":
-            window_flags |= Qt.WindowType.BypassWindowManagerHint
-        self.setWindowFlags(window_flags)
         self._build()
         set_native_windows_window_icon(self)
-        hide_native_windows_window_chrome(self)
 
     def _build(self) -> None:
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        pill = QFrame()
-        pill.setObjectName("countdownPill")
-        layout.addWidget(pill)
-
-        pill_layout = QHBoxLayout(pill)
-        pill_layout.setContentsMargins(18, 8, 8, 8)
-        pill_layout.setSpacing(10)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(18, 8, 8, 8)
+        layout.setSpacing(10)
 
         self.countdown_label = QLabel(self.controller.countdown_time_text())
         self.countdown_label.setObjectName("countdownText")
         self.countdown_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.countdown_label.setMinimumWidth(66)
-        pill_layout.addWidget(self.countdown_label)
+        layout.addWidget(self.countdown_label)
 
         hide_button = QPushButton("x")
         hide_button.setObjectName("countdownHideButton")
         hide_button.setCursor(Qt.CursorShape.PointingHandCursor)
         hide_button.setToolTip("Hide countdown")
         hide_button.clicked.connect(self.controller.hide_countdown_window)
-        pill_layout.addWidget(hide_button)
+        layout.addWidget(hide_button)
 
         self.adjustSize()
         hint = self.sizeHint()
@@ -594,21 +488,6 @@ class CountdownWindow(QWidget):
         else:
             self.controller.stop()
         event.accept()
-
-    def showEvent(self, event) -> None:
-        super().showEvent(event)
-        hide_native_windows_window_chrome(self)
-        QTimer.singleShot(0, lambda: hide_native_windows_window_chrome(self))
-        QTimer.singleShot(100, lambda: hide_native_windows_window_chrome(self))
-
-    def paintEvent(self, event: QPaintEvent) -> None:
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(QPen(QColor("#4a4a4a"), 1))
-        painter.setBrush(QColor(PANEL_BG))
-        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
-        radius = rect.height() / 2
-        painter.drawRoundedRect(rect, radius, radius)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
