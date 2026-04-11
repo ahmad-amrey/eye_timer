@@ -37,18 +37,33 @@ def set_windows_app_id() -> None:
         pass
 
 
+def set_macos_accessory_activation_policy() -> None:
+    if platform.system().lower() != "darwin":
+        return
+    try:
+        from AppKit import NSApp, NSApplicationActivationPolicyAccessory  # type: ignore
+
+        app = NSApp()
+        if app is not None:
+            app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+    except Exception:
+        pass
+
+
 set_windows_app_id()
 
 try:
     from PySide6.QtCore import QPoint, Qt, QTimer
-    from PySide6.QtGui import QColor, QCloseEvent, QIcon, QKeyEvent, QMouseEvent, QPaintEvent, QPainter, QScreen
+    from PySide6.QtGui import QAction, QColor, QCloseEvent, QIcon, QKeyEvent, QMouseEvent, QPaintEvent, QPainter, QScreen
     from PySide6.QtWidgets import (
         QApplication,
         QFrame,
         QHBoxLayout,
         QLabel,
+        QMenu,
         QPushButton,
         QSizePolicy,
+        QSystemTrayIcon,
         QVBoxLayout,
         QWidget,
     )
@@ -202,6 +217,7 @@ class AppConfig:
     overlay_alpha: float = 0.86
     prepare_panel_alpha: float = 0.96
     start_minimized: bool = True
+    use_system_tray: bool = True
     healthy_suggestions: tuple[str, ...] = (
         "Look at something at least 6 meters away.",
         "Close your eyes and relax your shoulders.",
@@ -384,7 +400,8 @@ class ControlWindow(QWidget):
         self.setObjectName("controlWindow")
         self.setWindowTitle("Eye Timer")
         self.setWindowIcon(controller.app_icon)
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window)
+        window_kind = Qt.WindowType.Tool if controller.tray_available else Qt.WindowType.Window
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | window_kind)
         self.setMinimumWidth(520)
         self._build()
         set_native_windows_window_icon(self)
@@ -402,7 +419,7 @@ class ControlWindow(QWidget):
         minimize = QPushButton("_")
         minimize.setObjectName("windowButton")
         minimize.setCursor(Qt.CursorShape.PointingHandCursor)
-        minimize.clicked.connect(self.showMinimized)
+        minimize.clicked.connect(self.controller.hide_control_window)
         title_bar.addWidget(minimize)
         layout.addLayout(title_bar)
 
@@ -438,7 +455,13 @@ class ControlWindow(QWidget):
         self.next_break_label.setText(text)
 
     def closeEvent(self, event: QCloseEvent) -> None:
-        self.controller.stop()
+        if self.controller.stopping:
+            event.accept()
+            return
+        if self.controller.tray_icon is not None:
+            self.controller.hide_control_window()
+        else:
+            self.controller.stop()
         event.accept()
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
@@ -600,15 +623,83 @@ class EyeTimerApp:
         self.prepare_panel_dismissed = False
         self.stopping = False
         self.app_icon = qt_app.windowIcon()
+        self.tray_available = self.config.use_system_tray and QSystemTrayIcon.isSystemTrayAvailable()
+        self.tray_icon: QSystemTrayIcon | None = None
+        self.tray_show_action: QAction | None = None
 
         self.control_window = ControlWindow(self)
-        self.control_window.show()
-        if self.config.start_minimized:
-            self.control_window.showMinimized()
+        self.setup_tray_icon()
+        self.apply_startup_visibility()
 
         self.timer = QTimer()
         self.timer.timeout.connect(self.tick)
         self.timer.start(self.config.tick_ms)
+
+    def setup_tray_icon(self) -> None:
+        if not self.tray_available:
+            return
+
+        tray = QSystemTrayIcon(self.app_icon, self.qt_app)
+        tray.setToolTip("Eye Timer")
+
+        menu = QMenu()
+        self.tray_show_action = QAction("Show Eye Timer", menu)
+        self.tray_show_action.triggered.connect(self.toggle_control_window)
+        menu.addAction(self.tray_show_action)
+        menu.addSeparator()
+        take_break = QAction("Take break now", menu)
+        take_break.triggered.connect(self.start_break)
+        menu.addAction(take_break)
+        reset_timer = QAction("Reset timer", menu)
+        reset_timer.triggered.connect(self.reset_work_timer)
+        menu.addAction(reset_timer)
+        menu.addSeparator()
+        quit_action = QAction("Quit", menu)
+        quit_action.triggered.connect(self.stop)
+        menu.addAction(quit_action)
+
+        tray.setContextMenu(menu)
+        tray.activated.connect(self.handle_tray_activation)
+        tray.show()
+        self.tray_icon = tray
+        self.update_tray_show_action()
+
+    def apply_startup_visibility(self) -> None:
+        if self.config.start_minimized and self.tray_icon is not None:
+            self.control_window.hide()
+            return
+        self.show_control_window()
+
+    def handle_tray_activation(self, reason: QSystemTrayIcon.ActivationReason) -> None:
+        if reason in (
+            QSystemTrayIcon.ActivationReason.Trigger,
+            QSystemTrayIcon.ActivationReason.DoubleClick,
+            QSystemTrayIcon.ActivationReason.MiddleClick,
+        ):
+            self.toggle_control_window()
+
+    def toggle_control_window(self) -> None:
+        if self.control_window.isVisible():
+            self.hide_control_window()
+        else:
+            self.show_control_window()
+
+    def show_control_window(self) -> None:
+        self.control_window.show()
+        self.control_window.raise_()
+        self.control_window.activateWindow()
+        self.update_tray_show_action()
+
+    def hide_control_window(self) -> None:
+        if self.tray_icon is None:
+            self.control_window.showMinimized()
+            return
+        self.control_window.hide()
+        self.update_tray_show_action()
+
+    def update_tray_show_action(self) -> None:
+        if self.tray_show_action is not None:
+            self.tray_show_action.setText("Hide Eye Timer" if self.control_window.isVisible() else "Show Eye Timer")
 
     def tick(self) -> None:
         now = time.monotonic()
@@ -741,6 +832,10 @@ class EyeTimerApp:
             overlay.close()
             overlay.deleteLater()
         self.overlay_windows = []
+        if self.tray_icon is not None:
+            self.tray_icon.hide()
+            self.tray_icon.deleteLater()
+            self.tray_icon = None
         self.qt_app.quit()
 
 
@@ -780,6 +875,8 @@ def main(config_factory: Callable[[], AppConfig] = AppConfig) -> int:
     qt_app.setWindowIcon(load_app_icon())
     qt_app.setQuitOnLastWindowClosed(False)
     qt_app.setStyleSheet(APP_STYLE)
+    if config.use_system_tray and config.start_minimized:
+        set_macos_accessory_activation_policy()
     controller = EyeTimerApp(qt_app, config)
     return qt_app.exec()
 
