@@ -19,13 +19,24 @@ import subprocess
 import time
 import tkinter as tk
 from dataclasses import dataclass
-from tkinter import ttk
 from typing import Callable, Iterable
+
+
+BG = "#101010"
+PANEL_BG = "#181818"
+TEXT = "#f5f5f5"
+MUTED_TEXT = "#b8c0bb"
+ACCENT = "#6ee7a8"
+ACCENT_DARK = "#198754"
+BUTTON_BG = "#f5f5f5"
+BUTTON_FG = "#101010"
+BUTTON_SECONDARY_BG = "#2a2a2a"
+BUTTON_SECONDARY_FG = "#f5f5f5"
 
 
 @dataclass(frozen=True)
 class AppConfig:
-    rest_interval_seconds: int = 20 * 60
+    rest_interval_seconds: int = 1 * 60
     rest_duration_seconds: int = 20
     prepare_notice_seconds: int = 20
     idle_pause_after_seconds: int = 60
@@ -50,6 +61,38 @@ class Monitor:
     width: int
     height: int
     name: str = "display"
+
+
+def clamp(value: float, minimum: float, maximum: float) -> float:
+    return max(minimum, min(maximum, value))
+
+
+def monitor_scale(monitor: Monitor) -> float:
+    # Base against a 1080p display, but keep extreme monitor sizes usable.
+    return clamp(min(monitor.width / 1920, monitor.height / 1080), 0.85, 1.75)
+
+
+def scaled(value: int, scale: float) -> int:
+    return max(1, int(round(value * scale)))
+
+
+def enable_dpi_awareness() -> None:
+    if platform.system().lower() != "windows":
+        return
+
+    try:
+        ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
+        return
+    except Exception:
+        pass
+
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except Exception:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
 
 
 class IdleDetector:
@@ -276,6 +319,7 @@ class EyeTimerApp:
         self.config = config
         self.idle_detector = IdleDetector()
         self.monitors = get_monitors(root)
+        self.ui_scale = self._root_scale()
         self.active_seconds = 0.0
         self.last_tick = time.monotonic()
         self.break_started_at: float | None = None
@@ -284,30 +328,59 @@ class EyeTimerApp:
         self.countdown_labels: list[tk.Label] = []
         self.suggestion_labels: list[tk.Label] = []
         self.prepare_window: tk.Toplevel | None = None
+        self.control_window_size: tuple[int, int] | None = None
+        self.control_window_resize_job: str | None = None
+        self.prepare_panel_dismissed = False
         self.prepare_countdown_var = tk.StringVar(value="")
-        self.status_var = tk.StringVar(value="")
-        self.next_break_var = tk.StringVar(value="")
+        self.status_var = tk.StringVar(value="Starting.")
+        self.next_break_var = tk.StringVar(value=self._format_next_break(self.config.rest_interval_seconds))
         self._build_control_window()
         self._tick()
 
     def _build_control_window(self) -> None:
+        scale = self.ui_scale
         self.root.title("Eye Timer")
-        self.root.geometry("340x170")
+        self.root.configure(background=BG)
+        self.root.geometry(f"{scaled(560, scale)}x{scaled(260, scale)}")
+        self.root.minsize(scaled(520, scale), scaled(240, scale))
         self.root.resizable(False, False)
         self.root.protocol("WM_DELETE_WINDOW", self.stop)
 
-        container = ttk.Frame(self.root, padding=14)
+        container = tk.Frame(self.root, padx=scaled(24, scale), pady=scaled(22, scale), background=BG)
         container.pack(fill="both", expand=True)
 
-        ttk.Label(container, text="Eye Timer", font=("Segoe UI", 14, "bold")).pack(anchor="w")
-        ttk.Label(container, textvariable=self.status_var).pack(anchor="w", pady=(10, 0))
-        ttk.Label(container, textvariable=self.next_break_var).pack(anchor="w", pady=(4, 12))
+        tk.Label(
+            container,
+            text="Eye Timer",
+            font=("Segoe UI", 20, "bold"),
+            foreground=TEXT,
+            background=BG,
+        ).pack(anchor="w")
 
-        buttons = ttk.Frame(container)
-        buttons.pack(fill="x")
-        ttk.Button(buttons, text="Take break now", command=self._start_break).pack(side="left")
-        ttk.Button(buttons, text="Reset timer", command=self._reset_work_timer).pack(side="left", padx=8)
-        ttk.Button(buttons, text="Quit", command=self.stop).pack(side="right")
+        tk.Label(
+            container,
+            textvariable=self.status_var,
+            font=("Segoe UI", 11),
+            foreground=MUTED_TEXT,
+            background=BG,
+        ).pack(anchor="w", pady=(scaled(16, scale), 0))
+
+        tk.Label(
+            container,
+            textvariable=self.next_break_var,
+            font=("Segoe UI", 16, "bold"),
+            foreground=ACCENT,
+            background=BG,
+        ).pack(anchor="w", pady=(scaled(4, scale), scaled(20, scale)))
+
+        buttons = tk.Frame(container, background=BG)
+        buttons.pack(fill="x", pady=(scaled(2, scale), 0))
+        self._make_button(buttons, "Take break now", self._start_break, primary=True, scale=scale).pack(side="left")
+        self._make_button(buttons, "Reset timer", self._reset_work_timer, scale=scale).pack(side="left", padx=scaled(10, scale))
+        self._make_button(buttons, "Quit", self.stop, scale=scale).pack(side="right")
+
+        self._fit_root_to_content()
+        self.root.bind("<Configure>", self._keep_control_window_size)
 
         if self.config.start_minimized:
             self.root.after(250, self.root.iconify)
@@ -328,6 +401,7 @@ class EyeTimerApp:
     def _update_work_timer(self, elapsed: float, idle_seconds: float) -> None:
         if idle_seconds >= self.config.idle_reset_after_seconds:
             self.active_seconds = 0.0
+            self.prepare_panel_dismissed = False
             self._hide_prepare_panel()
             self.status_var.set("Away long enough to count as a rest.")
             self.next_break_var.set(self._format_next_break(self.config.rest_interval_seconds))
@@ -337,6 +411,7 @@ class EyeTimerApp:
             self.active_seconds += elapsed
             self.status_var.set("Counting active computer use.")
         else:
+            self.prepare_panel_dismissed = False
             self._hide_prepare_panel()
             self.status_var.set("Paused while the computer is idle.")
 
@@ -345,14 +420,17 @@ class EyeTimerApp:
         if seconds_until_break <= 0:
             self._start_break()
         elif seconds_until_break <= self.config.prepare_notice_seconds:
-            self._show_or_update_prepare_panel(max(1, int(seconds_until_break)))
+            if not self.prepare_panel_dismissed:
+                self._show_or_update_prepare_panel(max(1, int(seconds_until_break)))
         else:
+            self.prepare_panel_dismissed = False
             self._hide_prepare_panel()
 
     def _start_break(self) -> None:
         if self.break_started_at is not None:
             return
 
+        self.prepare_panel_dismissed = False
         self._hide_prepare_panel()
         self.break_started_at = time.monotonic()
         suggestion = self.config.healthy_suggestions[self.suggestion_index % len(self.config.healthy_suggestions)]
@@ -363,49 +441,50 @@ class EyeTimerApp:
         self.suggestion_labels = []
 
         for monitor in self.monitors:
+            scale = monitor_scale(monitor)
             window = tk.Toplevel(self.root)
             window.overrideredirect(True)
             self._set_window_attribute(window, "-topmost", True)
             self._set_window_attribute(window, "-alpha", self.config.overlay_alpha)
-            window.configure(background="#050505")
+            window.configure(background=BG)
             window.geometry(f"{monitor.width}x{monitor.height}+{monitor.x}+{monitor.y}")
             window.bind("<Escape>", lambda _event: self._finish_break(skipped=True))
             window.bind("<space>", lambda _event: self._finish_break(skipped=True))
             window.bind("<Button-1>", lambda _event: window.focus_force())
 
-            content = tk.Frame(window, background="#050505")
-            content.place(relx=0.5, rely=0.5, anchor="center")
+            content = tk.Frame(window, background=BG, padx=scaled(36, scale), pady=scaled(28, scale))
+            content.place(relx=0.5, rely=0.48, anchor="center")
 
             title = tk.Label(
                 content,
                 text="Rest your eyes",
-                font=("Segoe UI", 30, "bold"),
-                foreground="#f7f7f7",
-                background="#050505",
+                font=("Segoe UI", scaled(34, scale), "bold"),
+                foreground=TEXT,
+                background=BG,
             )
-            title.pack(pady=(0, 18))
+            title.pack(pady=(0, scaled(18, scale)))
 
             countdown = tk.Label(
                 content,
                 text=str(self.config.rest_duration_seconds),
-                font=("Segoe UI", 76, "bold"),
-                foreground="#ffffff",
-                background="#050505",
+                font=("Segoe UI", scaled(96, scale), "bold"),
+                foreground=TEXT,
+                background=BG,
             )
             countdown.pack()
 
             suggestion_label = tk.Label(
                 content,
                 text=suggestion,
-                font=("Segoe UI", 18),
-                foreground="#d7f7df",
-                background="#050505",
-                wraplength=max(320, min(900, monitor.width - 160)),
+                font=("Segoe UI", scaled(20, scale)),
+                foreground=ACCENT,
+                background=BG,
+                wraplength=max(scaled(340, scale), min(scaled(980, scale), monitor.width - scaled(160, scale))),
                 justify="center",
             )
-            suggestion_label.pack(pady=(16, 28))
+            suggestion_label.pack(pady=(scaled(18, scale), scaled(30, scale)))
 
-            skip = ttk.Button(content, text="Skip break", command=lambda: self._finish_break(skipped=True))
+            skip = self._make_button(content, "Skip break", lambda: self._finish_break(skipped=True), scale=scale)
             skip.pack()
 
             self.overlay_windows.append(window)
@@ -438,6 +517,7 @@ class EyeTimerApp:
         self.suggestion_labels = []
         self.break_started_at = None
         self.active_seconds = 0.0
+        self.prepare_panel_dismissed = False
         self.last_tick = time.monotonic()
         self.status_var.set("Break skipped." if skipped else "Break completed.")
         self.next_break_var.set(self._format_next_break(self.config.rest_interval_seconds))
@@ -446,38 +526,47 @@ class EyeTimerApp:
         if self.break_started_at is not None:
             return
         self.active_seconds = 0.0
+        self.prepare_panel_dismissed = False
         self._hide_prepare_panel()
         self.status_var.set("Timer reset.")
         self.next_break_var.set(self._format_next_break(self.config.rest_interval_seconds))
 
     def _show_or_update_prepare_panel(self, seconds_until_break: int) -> None:
+        if self.prepare_panel_dismissed:
+            return
+
         self.prepare_countdown_var.set(f"Eye rest starts in {seconds_until_break}s")
         if self.prepare_window is not None and self.prepare_window.winfo_exists():
             return
 
         monitor = self._primary_monitor()
-        width = min(360, max(280, monitor.width - 48))
-        height = 118
-        x = monitor.x + monitor.width - width - 24
-        y = monitor.y + monitor.height - height - 56
+        scale = monitor_scale(monitor)
+        width = min(scaled(460, scale), max(scaled(340, scale), monitor.width - scaled(48, scale)))
+        height = scaled(130, scale)
+        margin = scaled(24, scale)
+        x = monitor.x + monitor.width - width - margin
+        y = monitor.y + monitor.height - height - scaled(56, scale)
 
         window = tk.Toplevel(self.root)
         window.overrideredirect(True)
         self._set_window_attribute(window, "-topmost", True)
         self._set_window_attribute(window, "-alpha", self.config.prepare_panel_alpha)
-        window.configure(background="#202020")
+        window.configure(background=PANEL_BG)
         window.geometry(f"{width}x{height}+{x}+{y}")
         window.bind("<Button-1>", lambda _event: window.focus_force())
 
-        frame = tk.Frame(window, padx=18, pady=14, background="#202020")
-        frame.pack(fill="both", expand=True)
+        accent = tk.Frame(window, width=scaled(5, scale), background=ACCENT_DARK)
+        accent.pack(side="left", fill="y")
+
+        frame = tk.Frame(window, padx=scaled(22, scale), pady=scaled(18, scale), background=PANEL_BG)
+        frame.pack(side="left", fill="both", expand=True)
 
         title = tk.Label(
             frame,
             text="Break soon",
-            font=("Segoe UI", 13, "bold"),
-            foreground="#ffffff",
-            background="#202020",
+            font=("Segoe UI", 15, "bold"),
+            foreground=TEXT,
+            background=PANEL_BG,
             anchor="w",
         )
         title.pack(fill="x")
@@ -485,24 +574,35 @@ class EyeTimerApp:
         countdown = tk.Label(
             frame,
             textvariable=self.prepare_countdown_var,
-            font=("Segoe UI", 11),
-            foreground="#d7f7df",
-            background="#202020",
+            font=("Segoe UI", 12, "bold"),
+            foreground=ACCENT,
+            background=PANEL_BG,
             anchor="w",
         )
-        countdown.pack(fill="x", pady=(6, 2))
+        countdown.pack(fill="x", pady=(scaled(8, scale), scaled(3, scale)))
 
         message = tk.Label(
             frame,
             text="Finish what you are doing and look away.",
             font=("Segoe UI", 10),
-            foreground="#ededed",
-            background="#202020",
+            foreground=MUTED_TEXT,
+            background=PANEL_BG,
             anchor="w",
-            wraplength=width - 36,
+            wraplength=width - scaled(60, scale),
             justify="left",
         )
         message.pack(fill="x")
+
+        actions = tk.Frame(frame, background=PANEL_BG)
+        actions.pack(fill="x", pady=(scaled(14, scale), 0))
+        self._make_button(actions, "Hide", self._dismiss_prepare_panel, scale=scale).pack(side="left")
+
+        window.update_idletasks()
+        width = max(width, window.winfo_reqwidth())
+        height = max(height, window.winfo_reqheight())
+        x = monitor.x + monitor.width - width - margin
+        y = monitor.y + monitor.height - height - scaled(56, scale)
+        window.geometry(f"{width}x{height}+{x}+{y}")
 
         self.prepare_window = window
 
@@ -511,11 +611,82 @@ class EyeTimerApp:
             self.prepare_window.destroy()
         self.prepare_window = None
 
+    def _dismiss_prepare_panel(self) -> None:
+        self.prepare_panel_dismissed = True
+        self._hide_prepare_panel()
+
+    def _make_button(
+        self,
+        parent: tk.Misc,
+        text: str,
+        command: Callable[[], None],
+        *,
+        primary: bool = False,
+        scale: float = 1.0,
+    ) -> tk.Button:
+        background = BUTTON_BG if primary else BUTTON_SECONDARY_BG
+        foreground = BUTTON_FG if primary else BUTTON_SECONDARY_FG
+        active_background = "#ffffff" if primary else "#363636"
+        button = tk.Button(
+            parent,
+            text=text,
+            command=command,
+            font=("Segoe UI", 10, "bold"),
+            foreground=foreground,
+            background=background,
+            activeforeground=foreground,
+            activebackground=active_background,
+            relief="flat",
+            borderwidth=0,
+            highlightthickness=0,
+            padx=scaled(18, scale),
+            pady=scaled(9, scale),
+            cursor="hand2",
+        )
+        button.bind("<Enter>", lambda _event: button.configure(background=active_background))
+        button.bind("<Leave>", lambda _event: button.configure(background=background))
+        return button
+
+    def _fit_root_to_content(self) -> None:
+        self.root.update_idletasks()
+        width = max(self.root.winfo_width(), self.root.winfo_reqwidth())
+        height = max(self.root.winfo_height(), self.root.winfo_reqheight())
+        self.control_window_size = (width, height)
+        self.root.geometry(f"{width}x{height}")
+        self.root.minsize(width, height)
+        self.root.maxsize(width, height)
+
+    def _keep_control_window_size(self, event: tk.Event) -> None:
+        if event.widget is not self.root or self.control_window_size is None:
+            return
+        if self.root.state() != "normal":
+            return
+
+        width, height = self.control_window_size
+        if event.width == width and event.height == height:
+            return
+        if self.control_window_resize_job is not None:
+            self.root.after_cancel(self.control_window_resize_job)
+        self.control_window_resize_job = self.root.after(50, self._restore_control_window_size)
+
+    def _restore_control_window_size(self) -> None:
+        self.control_window_resize_job = None
+        if self.control_window_size is None or self.root.state() != "normal":
+            return
+        width, height = self.control_window_size
+        self.root.geometry(f"{width}x{height}")
+
     def _primary_monitor(self) -> Monitor:
         for monitor in self.monitors:
             if monitor.x == 0 and monitor.y == 0:
                 return monitor
         return self.monitors[0]
+
+    def _root_scale(self) -> float:
+        try:
+            return clamp(float(self.root.winfo_fpixels("1i")) / 96.0, 1.0, 1.75)
+        except tk.TclError:
+            return 1.0
 
     @staticmethod
     def _set_window_attribute(window: tk.Toplevel, attribute: str, value: object) -> None:
@@ -532,6 +703,12 @@ class EyeTimerApp:
         return f"Next break in {remainder}s"
 
     def stop(self) -> None:
+        if self.control_window_resize_job is not None:
+            try:
+                self.root.after_cancel(self.control_window_resize_job)
+            except tk.TclError:
+                pass
+            self.control_window_resize_job = None
         self._hide_prepare_panel()
         for window in self.overlay_windows:
             if window.winfo_exists():
@@ -554,6 +731,7 @@ def validate_config(config: AppConfig) -> None:
 
 
 def main(config_factory: Callable[[], AppConfig] = AppConfig) -> None:
+    enable_dpi_awareness()
     config = config_factory()
     validate_config(config)
     root = tk.Tk()
