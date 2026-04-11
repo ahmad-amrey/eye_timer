@@ -15,7 +15,7 @@ A small eye-rest reminder for Windows, macOS, and Linux.
 
 ## Disclaimer
 
-This project was built by AI, but tested on Windows 11.
+This project was built by AI, I haven't verified its performance or claims that it is bug free, but I have tested on Windows 11 and it works as intended!
 
 ## Install
 
