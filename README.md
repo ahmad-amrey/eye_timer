@@ -15,7 +15,7 @@ python eye_timer.py
 ```
 
 The app starts in the system tray/menu bar/status area by default. Use the tray
-icon menu to show the control window, start a break immediately, reset the
+icon menu to show the floating countdown, start a break immediately, reset the
 timer, or quit.
 
 ## Defaults
@@ -36,10 +36,10 @@ Edit `AppConfig` in `eye_timer.py` to change behavior:
 - The pre-break notification can be hidden for the current countdown window.
 - Hovering over the tray/status icon shows the remaining time. The right-click
   tray menu also shows the remaining time at the top.
-- The control window hides itself when it loses focus, so it behaves like a
-  temporary notification panel.
-- The control window has no taskbar entry while hidden in the tray. If the OS or
-  desktop session has no tray/status area, the control window is shown instead.
+- The floating countdown is always on top, draggable, and toggleable from the
+  tray/status icon menu.
+- The app has no taskbar entry while hidden in the tray. If the OS or desktop
+  session has no tray/status area, the countdown window is shown instead.
 - On macOS, Qt exposes the tray icon as a menu-bar status item. A packaged app
   may also need `LSUIElement=true` in its `Info.plist` to hide the Dock icon.
 - On Windows, `icon.ico` is used for native taskbar/window icons and `icon.png`

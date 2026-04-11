@@ -53,8 +53,19 @@ def set_macos_accessory_activation_policy() -> None:
 set_windows_app_id()
 
 try:
-    from PySide6.QtCore import QEvent, QPoint, Qt, QTimer
-    from PySide6.QtGui import QAction, QColor, QCloseEvent, QIcon, QKeyEvent, QMouseEvent, QPaintEvent, QPainter, QScreen
+    from PySide6.QtCore import QPoint, QRectF, Qt, QTimer
+    from PySide6.QtGui import (
+        QAction,
+        QColor,
+        QCloseEvent,
+        QIcon,
+        QKeyEvent,
+        QMouseEvent,
+        QPaintEvent,
+        QPainter,
+        QPen,
+        QScreen,
+    )
     from PySide6.QtWidgets import (
         QApplication,
         QFrame,
@@ -90,24 +101,20 @@ QWidget {{
     color: {TEXT};
 }}
 
-QWidget#controlWindow {{
-    background: {BG};
+QWidget#countdownWindow {{
+    background-color: transparent;
 }}
 
-QLabel#appTitle {{
-    font-size: 22pt;
-    font-weight: 700;
+QFrame#countdownPill {{
+    background: transparent;
+    border: 0;
 }}
 
-QLabel#statusLabel {{
-    color: {MUTED_TEXT};
-    font-size: 11pt;
-}}
-
-QLabel#nextBreakLabel {{
+QLabel#countdownText {{
+    background: transparent;
     color: {ACCENT};
-    font-size: 17pt;
-    font-weight: 700;
+    font-size: 16pt;
+    font-weight: 800;
 }}
 
 QWidget#overlayWindow {{
@@ -188,20 +195,22 @@ QPushButton#secondaryButton:hover {{
     background: #363636;
 }}
 
-QPushButton#windowButton {{
-    background: {BUTTON_SECONDARY_BG};
-    color: {BUTTON_SECONDARY_FG};
-    border-radius: 8px;
+QPushButton#countdownHideButton {{
+    background: #252525;
+    color: {MUTED_TEXT};
+    border-radius: 13px;
     padding: 0;
-    min-width: 34px;
-    max-width: 34px;
-    min-height: 28px;
-    max-height: 28px;
-    font-size: 9pt;
+    min-width: 26px;
+    max-width: 26px;
+    min-height: 26px;
+    max-height: 26px;
+    font-size: 10pt;
+    font-weight: 800;
 }}
 
-QPushButton#windowButton:hover {{
-    background: #363636;
+QPushButton#countdownHideButton:hover {{
+    background: #343434;
+    color: {TEXT};
 }}
 
 QMenu {{
@@ -420,80 +429,189 @@ def set_native_windows_window_icon(widget: QWidget) -> None:
         pass
 
 
-class ControlWindow(QWidget):
+def hide_native_windows_window_chrome(widget: QWidget) -> None:
+    if platform.system().lower() != "windows":
+        return
+
+    try:
+        hwnd = ctypes.c_void_p(int(widget.winId()))
+
+        user32 = ctypes.windll.user32
+        get_window_long_ptr = getattr(user32, "GetWindowLongPtrW", user32.GetWindowLongW)
+        set_window_long_ptr = getattr(user32, "SetWindowLongPtrW", user32.SetWindowLongW)
+        get_window_long_ptr.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        get_window_long_ptr.restype = ctypes.c_ssize_t
+        set_window_long_ptr.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_ssize_t]
+        set_window_long_ptr.restype = ctypes.c_ssize_t
+        user32.SetWindowPos.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_uint,
+        ]
+        user32.SetWindowPos.restype = ctypes.c_bool
+        gwl_style = -16
+        gwl_exstyle = -20
+        ws_caption = 0x00C00000
+        ws_thickframe = 0x00040000
+        ws_ex_dlgmodalframe = 0x00000001
+        ws_ex_windowedge = 0x00000100
+        ws_ex_clientedge = 0x00000200
+        ws_ex_staticedge = 0x00020000
+        swp_nosize = 0x0001
+        swp_nomove = 0x0002
+        swp_nozorder = 0x0004
+        swp_noactivate = 0x0010
+        swp_framechanged = 0x0020
+
+        style = get_window_long_ptr(hwnd, gwl_style)
+        style &= ~(ws_caption | ws_thickframe)
+        set_window_long_ptr(hwnd, gwl_style, style)
+
+        exstyle = get_window_long_ptr(hwnd, gwl_exstyle)
+        exstyle &= ~(ws_ex_dlgmodalframe | ws_ex_windowedge | ws_ex_clientedge | ws_ex_staticedge)
+        set_window_long_ptr(hwnd, gwl_exstyle, exstyle)
+
+        user32.SetWindowPos(
+            hwnd,
+            None,
+            0,
+            0,
+            0,
+            0,
+            swp_nosize | swp_nomove | swp_nozorder | swp_noactivate | swp_framechanged,
+        )
+
+        dwmapi = ctypes.windll.dwmapi
+        dwmapi.DwmSetWindowAttribute.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_uint,
+            ctypes.c_void_p,
+            ctypes.c_uint,
+        ]
+        dwmapi.DwmSetWindowAttribute.restype = ctypes.c_long
+
+        nc_rendering_policy_attribute = 2
+        dwm_nc_rendering_disabled = ctypes.c_uint(1)
+        dwmapi.DwmSetWindowAttribute(
+            hwnd,
+            nc_rendering_policy_attribute,
+            ctypes.byref(dwm_nc_rendering_disabled),
+            ctypes.sizeof(dwm_nc_rendering_disabled),
+        )
+
+        border_color_attribute = 34
+        color_none = ctypes.c_uint(0xFFFFFFFE)
+        dwmapi.DwmSetWindowAttribute(
+            hwnd,
+            border_color_attribute,
+            ctypes.byref(color_none),
+            ctypes.sizeof(color_none),
+        )
+    except Exception:
+        pass
+
+
+class CountdownWindow(QWidget):
     def __init__(self, controller: EyeTimerApp) -> None:
         super().__init__()
         self.controller = controller
         self.drag_offset: QPoint | None = None
-        self.setObjectName("controlWindow")
-        self.setWindowTitle("Eye Timer")
+        self.setObjectName("countdownWindow")
+        self.setWindowTitle("Eye Timer countdown")
         self.setWindowIcon(controller.app_icon)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         window_kind = Qt.WindowType.Tool if controller.tray_available else Qt.WindowType.Window
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | window_kind)
-        self.setMinimumWidth(520)
+        window_flags = (
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.NoDropShadowWindowHint
+            | window_kind
+        )
+        if platform.system().lower() == "windows":
+            window_flags |= Qt.WindowType.BypassWindowManagerHint
+        self.setWindowFlags(window_flags)
         self._build()
         set_native_windows_window_icon(self)
+        hide_native_windows_window_chrome(self)
 
     def _build(self) -> None:
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(22, 18, 22, 24)
-        layout.setSpacing(14)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
-        title_bar = QHBoxLayout()
-        title_bar.setContentsMargins(0, 0, 0, 8)
-        title_bar.setSpacing(8)
-        title_bar.addStretch(1)
+        pill = QFrame()
+        pill.setObjectName("countdownPill")
+        layout.addWidget(pill)
 
-        minimize = QPushButton("_")
-        minimize.setObjectName("windowButton")
-        minimize.setCursor(Qt.CursorShape.PointingHandCursor)
-        minimize.clicked.connect(self.controller.hide_control_window)
-        title_bar.addWidget(minimize)
-        layout.addLayout(title_bar)
+        pill_layout = QHBoxLayout(pill)
+        pill_layout.setContentsMargins(18, 8, 8, 8)
+        pill_layout.setSpacing(10)
 
-        title = QLabel("Eye Timer")
-        title.setObjectName("appTitle")
-        layout.addWidget(title)
+        self.countdown_label = QLabel(self.controller.countdown_time_text())
+        self.countdown_label.setObjectName("countdownText")
+        self.countdown_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.countdown_label.setMinimumWidth(66)
+        pill_layout.addWidget(self.countdown_label)
 
-        self.status_label = QLabel("Starting.")
-        self.status_label.setObjectName("statusLabel")
-        layout.addWidget(self.status_label)
-
-        self.next_break_label = QLabel(format_next_break(self.controller.config.rest_interval_seconds))
-        self.next_break_label.setObjectName("nextBreakLabel")
-        layout.addWidget(self.next_break_label)
-
-        button_row = QHBoxLayout()
-        button_row.setContentsMargins(0, 10, 0, 0)
-        button_row.setSpacing(10)
-        button_row.addWidget(make_button("Take break now", self.controller.start_break, primary=True))
-        button_row.addWidget(make_button("Reset timer", self.controller.reset_work_timer))
-        button_row.addStretch(1)
-        button_row.addWidget(make_button("Quit", self.controller.stop))
-        layout.addLayout(button_row)
+        hide_button = QPushButton("x")
+        hide_button.setObjectName("countdownHideButton")
+        hide_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        hide_button.setToolTip("Hide countdown")
+        hide_button.clicked.connect(self.controller.hide_countdown_window)
+        pill_layout.addWidget(hide_button)
 
         self.adjustSize()
         hint = self.sizeHint()
-        self.setFixedSize(max(520, hint.width()), hint.height())
+        self.setFixedSize(hint.width(), hint.height())
+        self._position_on_primary_screen()
 
-    def set_status(self, text: str) -> None:
-        self.status_label.setText(text)
+    def set_countdown(self, text: str) -> None:
+        self.countdown_label.setText(text)
+        self.adjustSize()
+        hint = self.sizeHint()
+        self.setFixedSize(hint.width(), hint.height())
+        self.update()
 
-    def set_next_break(self, text: str) -> None:
-        self.next_break_label.setText(text)
+    def _position_on_primary_screen(self) -> None:
+        screen = self.controller.qt_app.primaryScreen()
+        if screen is None:
+            return
+        geometry = screen.availableGeometry()
+        margin = 24
+        self.move(geometry.right() - self.width() - margin + 1, geometry.top() + margin)
 
     def closeEvent(self, event: QCloseEvent) -> None:
         if self.controller.stopping:
             event.accept()
             return
         if self.controller.tray_icon is not None:
-            self.controller.hide_control_window()
+            self.controller.hide_countdown_window()
         else:
             self.controller.stop()
         event.accept()
 
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        hide_native_windows_window_chrome(self)
+        QTimer.singleShot(0, lambda: hide_native_windows_window_chrome(self))
+        QTimer.singleShot(100, lambda: hide_native_windows_window_chrome(self))
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(QColor("#4a4a4a"), 1))
+        painter.setBrush(QColor(PANEL_BG))
+        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        radius = rect.height() / 2
+        painter.drawRoundedRect(rect, radius, radius)
+
     def mousePressEvent(self, event: QMouseEvent) -> None:
-        if event.button() == Qt.MouseButton.LeftButton and not isinstance(self.childAt(event.position().toPoint()), QPushButton):
+        if event.button() == Qt.MouseButton.LeftButton:
             self.drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
             event.accept()
             return
@@ -509,14 +627,6 @@ class ControlWindow(QWidget):
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         self.drag_offset = None
         super().mouseReleaseEvent(event)
-
-    def changeEvent(self, event: QEvent) -> None:
-        super().changeEvent(event)
-        if event.type() != QEvent.Type.ActivationChange:
-            return
-        if self.isActiveWindow() or not self.isVisible():
-            return
-        QTimer.singleShot(0, self.controller.hide_control_window_if_inactive)
 
 
 class BreakOverlay(QWidget):
@@ -664,9 +774,8 @@ class EyeTimerApp:
         self.tray_menu: QMenu | None = None
         self.tray_status_action: QAction | None = None
         self.tray_show_action: QAction | None = None
-        self.tray_menu_open = False
 
-        self.control_window = ControlWindow(self)
+        self.countdown_window = CountdownWindow(self)
         self.setup_tray_icon()
         self.apply_startup_visibility()
 
@@ -686,8 +795,8 @@ class EyeTimerApp:
         self.tray_status_action.setEnabled(False)
         menu.addAction(self.tray_status_action)
         menu.addSeparator()
-        self.tray_show_action = QAction("Show Eye Timer", menu)
-        self.tray_show_action.triggered.connect(self.toggle_control_window)
+        self.tray_show_action = QAction("Show countdown", menu)
+        self.tray_show_action.triggered.connect(self.toggle_countdown_window)
         menu.addAction(self.tray_show_action)
         menu.addSeparator()
         take_break = QAction("Take break now", menu)
@@ -713,9 +822,9 @@ class EyeTimerApp:
 
     def apply_startup_visibility(self) -> None:
         if self.config.start_minimized and self.tray_icon is not None:
-            self.control_window.hide()
+            self.countdown_window.hide()
             return
-        self.show_control_window()
+        self.show_countdown_window()
 
     def handle_tray_activation(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason in (
@@ -723,44 +832,36 @@ class EyeTimerApp:
             QSystemTrayIcon.ActivationReason.DoubleClick,
             QSystemTrayIcon.ActivationReason.MiddleClick,
         ):
-            self.toggle_control_window()
+            self.toggle_countdown_window()
 
-    def toggle_control_window(self) -> None:
-        if self.control_window.isVisible():
-            self.hide_control_window()
+    def toggle_countdown_window(self) -> None:
+        if self.countdown_window.isVisible():
+            self.hide_countdown_window()
         else:
-            self.show_control_window()
+            self.show_countdown_window()
 
-    def show_control_window(self) -> None:
-        self.control_window.show()
-        self.control_window.raise_()
-        self.control_window.activateWindow()
+    def show_countdown_window(self) -> None:
+        self.countdown_window.show()
+        self.countdown_window.raise_()
+        self.countdown_window.activateWindow()
         self.update_tray_show_action()
 
-    def hide_control_window(self) -> None:
+    def hide_countdown_window(self) -> None:
         if self.tray_icon is None:
-            self.control_window.showMinimized()
+            self.countdown_window.showMinimized()
             return
-        self.control_window.hide()
+        self.countdown_window.hide()
         self.update_tray_show_action()
-
-    def hide_control_window_if_inactive(self) -> None:
-        if self.stopping or self.tray_icon is None or self.tray_menu_open:
-            return
-        if self.control_window.isVisible() and not self.control_window.isActiveWindow():
-            self.hide_control_window()
 
     def handle_tray_menu_about_to_show(self) -> None:
-        self.tray_menu_open = True
         self.update_tray_status()
 
     def handle_tray_menu_about_to_hide(self) -> None:
-        self.tray_menu_open = False
         self.update_tray_status()
 
     def update_tray_show_action(self) -> None:
         if self.tray_show_action is not None:
-            self.tray_show_action.setText("Hide Eye Timer" if self.control_window.isVisible() else "Show Eye Timer")
+            self.tray_show_action.setText("Hide countdown" if self.countdown_window.isVisible() else "Show countdown")
 
     def update_tray_status(self) -> None:
         remaining = self.remaining_time_text()
@@ -768,6 +869,7 @@ class EyeTimerApp:
             self.tray_icon.setToolTip(f"Eye Timer\n{remaining}")
         if self.tray_status_action is not None:
             self.tray_status_action.setText(remaining)
+        self.countdown_window.set_countdown(self.countdown_time_text())
 
     def remaining_time_text(self) -> str:
         if self.break_started_at is not None:
@@ -776,6 +878,14 @@ class EyeTimerApp:
             return f"Break remaining: {remaining}s"
         seconds_until_break = self.config.rest_interval_seconds - self.active_seconds
         return format_next_break(max(0, int(seconds_until_break)))
+
+    def countdown_time_text(self) -> str:
+        if self.break_started_at is not None:
+            elapsed = time.monotonic() - self.break_started_at
+            remaining = max(0, self.config.rest_duration_seconds - int(elapsed))
+            return format_countdown(max(0, int(remaining)))
+        seconds_until_break = self.config.rest_interval_seconds - self.active_seconds
+        return format_countdown(max(0, int(seconds_until_break)))
 
     def tick(self) -> None:
         now = time.monotonic()
@@ -794,20 +904,15 @@ class EyeTimerApp:
             self.active_seconds = 0.0
             self.prepare_panel_dismissed = False
             self.hide_prepare_panel()
-            self.control_window.set_status("Away long enough to count as a rest.")
-            self.control_window.set_next_break(format_next_break(self.config.rest_interval_seconds))
             return
 
         if idle_seconds < self.config.idle_pause_after_seconds:
             self.active_seconds += elapsed
-            self.control_window.set_status("Counting active computer use.")
         else:
             self.prepare_panel_dismissed = False
             self.hide_prepare_panel()
-            self.control_window.set_status("Paused while the computer is idle.")
 
         seconds_until_break = self.config.rest_interval_seconds - self.active_seconds
-        self.control_window.set_next_break(format_next_break(max(0, int(seconds_until_break))))
 
         if seconds_until_break <= 0:
             self.start_break()
@@ -845,8 +950,6 @@ class EyeTimerApp:
 
         elapsed = now - self.break_started_at
         remaining = max(0, self.config.rest_duration_seconds - int(elapsed))
-        self.control_window.set_status("Resting your eyes.")
-        self.control_window.set_next_break(f"Break remaining: {remaining}s")
         for overlay in self.overlay_windows:
             overlay.set_remaining(remaining)
 
@@ -862,8 +965,7 @@ class EyeTimerApp:
         self.active_seconds = 0.0
         self.prepare_panel_dismissed = False
         self.last_tick = time.monotonic()
-        self.control_window.set_status("Break skipped." if skipped else "Break completed.")
-        self.control_window.set_next_break(format_next_break(self.config.rest_interval_seconds))
+        self.update_tray_status()
 
     def reset_work_timer(self) -> None:
         if self.break_started_at is not None:
@@ -871,8 +973,7 @@ class EyeTimerApp:
         self.active_seconds = 0.0
         self.prepare_panel_dismissed = False
         self.hide_prepare_panel()
-        self.control_window.set_status("Timer reset.")
-        self.control_window.set_next_break(format_next_break(self.config.rest_interval_seconds))
+        self.update_tray_status()
 
     def show_or_update_prepare_panel(self, seconds_until_break: int) -> None:
         if self.prepare_panel_dismissed:
@@ -922,6 +1023,11 @@ def format_next_break(seconds: int) -> str:
     if minutes:
         return f"Next break in {minutes}m {remainder}s"
     return f"Next break in {remainder}s"
+
+
+def format_countdown(seconds: int) -> str:
+    minutes, remainder = divmod(max(0, seconds), 60)
+    return f"{minutes:02d}:{remainder:02d}"
 
 
 def validate_config(config: AppConfig) -> None:
