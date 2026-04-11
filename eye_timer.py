@@ -26,6 +26,9 @@ from typing import Callable, Iterable
 ICON_FILE = "icon.png"
 WINDOWS_ICON_FILE = "icon.ico"
 WINDOWS_APP_ID = "EyeTimer.App"
+REST_START_SOUND_FILE = "universfield-new-notification-017-352293.mp3"
+REST_END_SOUND_FILE = "universfield-new-notification-017-352293-pitch-changed.mp3"
+SOUND_LEAD_IN_MS = 700
 
 
 def set_windows_app_id() -> None:
@@ -55,7 +58,7 @@ def set_macos_accessory_activation_policy() -> None:
 set_windows_app_id()
 
 try:
-    from PySide6.QtCore import QPoint, Qt, QTimer
+    from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QPoint, Qt, QTimer, QUrl
     from PySide6.QtGui import (
         QAction,
         QColor,
@@ -85,8 +88,27 @@ try:
         QVBoxLayout,
         QWidget,
     )
+    from PySide6.QtMultimedia import QAudio, QAudioDecoder, QAudioFormat, QAudioSink
 except ModuleNotFoundError as exc:
     raise SystemExit("PySide6 is required. Install it with: pip install PySide6") from exc
+
+
+@dataclass
+class ActiveSoundDecode:
+    decoder: QAudioDecoder
+    audio_format: QAudioFormat | None = None
+    chunks: list[bytes] | None = None
+
+    def __post_init__(self) -> None:
+        if self.chunks is None:
+            self.chunks = []
+
+
+@dataclass
+class ActiveSoundPlayback:
+    sink: QAudioSink
+    buffer: QBuffer
+    data: QByteArray
 
 
 BG = "#101010"
@@ -355,6 +377,7 @@ class AppConfig:
     overlay_alpha: float = 0.86
     prepare_panel_alpha: float = 0.96
     start_minimized: bool = False
+    sound_enabled: bool = True
     healthy_suggestions: tuple[str, ...] = (
         "Look at something at least 6 meters away.",
         "Close your eyes and relax your shoulders.",
@@ -373,6 +396,7 @@ SAVED_CONFIG_FIELDS = (
     "overlay_alpha",
     "prepare_panel_alpha",
     "start_minimized",
+    "sound_enabled",
     "healthy_suggestions",
 )
 
@@ -485,8 +509,15 @@ def make_button(text: str, callback: Callable[[], None], *, primary: bool = Fals
 
 
 def resource_path(filename: str) -> Path:
-    base_path = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
-    return base_path / filename
+    candidates = [Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))]
+    app_dir = app_directory()
+    if app_dir not in candidates:
+        candidates.append(app_dir)
+    for base_path in candidates:
+        path = base_path / filename
+        if path.exists():
+            return path
+    return candidates[0] / filename
 
 
 def load_app_icon() -> QIcon:
@@ -899,6 +930,14 @@ class SettingsWindow(QWidget):
             self.start_minimized,
         )
 
+        self.sound_enabled = QCheckBox("Play tones")
+        self._add_setting(
+            advanced_grid,
+            "Notification tones",
+            "Play a short audio file when a rest starts and another when a full rest completes.",
+            self.sound_enabled,
+        )
+
         suggestions_label = QLabel("Healthy suggestions")
         suggestions_label.setObjectName("settingsLabel")
         advanced_layout.addWidget(suggestions_label)
@@ -989,6 +1028,7 @@ class SettingsWindow(QWidget):
         for box in spin_boxes:
             box.valueChanged.connect(self.update_save_button_state)
         self.start_minimized.toggled.connect(self.update_save_button_state)
+        self.sound_enabled.toggled.connect(self.update_save_button_state)
         self.suggestions_text.textChanged.connect(self.update_save_button_state)
 
     def set_save_button_changed(self, has_changes: bool) -> None:
@@ -1011,6 +1051,7 @@ class SettingsWindow(QWidget):
             overlay_alpha=self.overlay_opacity_percent.value() / 100,
             prepare_panel_alpha=self.prepare_opacity_percent.value() / 100,
             start_minimized=self.start_minimized.isChecked(),
+            sound_enabled=self.sound_enabled.isChecked(),
             healthy_suggestions=suggestions,
         )
 
@@ -1033,6 +1074,7 @@ class SettingsWindow(QWidget):
         self.overlay_opacity_percent.setValue(round(config.overlay_alpha * 100))
         self.prepare_opacity_percent.setValue(round(config.prepare_panel_alpha * 100))
         self.start_minimized.setChecked(config.start_minimized)
+        self.sound_enabled.setChecked(config.sound_enabled)
         self.suggestions_text.setPlainText("\n".join(config.healthy_suggestions))
         self.status_label.setText("")
         self.set_save_button_changed(False)
@@ -1077,6 +1119,12 @@ class EyeTimerApp:
         self.tray_status_action: QAction | None = None
         self.tray_show_action: QAction | None = None
         self.settings_window: SettingsWindow | None = None
+        self.sound_files = {
+            "start": REST_START_SOUND_FILE,
+            "end": REST_END_SOUND_FILE,
+        }
+        self.active_sound_decodes: list[ActiveSoundDecode] = []
+        self.active_sound_playbacks: list[ActiveSoundPlayback] = []
 
         self.countdown_window = CountdownWindow(self)
         self.setup_tray_icon()
@@ -1266,6 +1314,7 @@ class EyeTimerApp:
         self.prepare_panel_dismissed = False
         self.hide_prepare_panel()
         self.break_started_at = time.monotonic()
+        self.play_notification_tone("start")
         suggestion = self.config.healthy_suggestions[self.suggestion_index % len(self.config.healthy_suggestions)]
         self.suggestion_index += 1
 
@@ -1301,7 +1350,89 @@ class EyeTimerApp:
         self.active_seconds = 0.0
         self.prepare_panel_dismissed = False
         self.last_tick = time.monotonic()
+        if not skipped:
+            self.play_notification_tone("end")
         self.update_tray_status()
+
+    def play_notification_tone(self, event: str) -> None:
+        if not self.config.sound_enabled:
+            return
+
+        filename = self.sound_files.get(event)
+        if not filename:
+            QApplication.beep()
+            return
+
+        sound_path = resource_path(filename)
+        if not sound_path.exists():
+            QApplication.beep()
+            return
+
+        decoder = QAudioDecoder(self.qt_app)
+        decode = ActiveSoundDecode(decoder=decoder)
+        self.active_sound_decodes.append(decode)
+        decoder.bufferReady.connect(lambda active_decode=decode: self.handle_sound_buffer_ready(active_decode))
+        decoder.finished.connect(lambda active_decode=decode: self.handle_sound_decode_finished(active_decode))
+        decoder.setSource(QUrl.fromLocalFile(str(sound_path)))
+        decoder.start()
+
+    def handle_sound_buffer_ready(self, decode: ActiveSoundDecode) -> None:
+        buffer = decode.decoder.read()
+        if not buffer.isValid():
+            return
+
+        if decode.audio_format is None:
+            decode.audio_format = buffer.format()
+        decode.chunks.append(bytes(buffer.data()))
+
+    def handle_sound_decode_finished(self, decode: ActiveSoundDecode) -> None:
+        if decode not in self.active_sound_decodes:
+            return
+
+        self.active_sound_decodes.remove(decode)
+
+        if decode.audio_format is None or not decode.chunks:
+            decode.decoder.deleteLater()
+            QApplication.beep()
+            return
+
+        pcm_bytes = self.make_silence(decode.audio_format, SOUND_LEAD_IN_MS) + b"".join(decode.chunks)
+        decode.decoder.deleteLater()
+        self.start_notification_playback(decode.audio_format, pcm_bytes)
+
+    def start_notification_playback(self, audio_format: QAudioFormat, pcm_bytes: bytes) -> None:
+        data = QByteArray(pcm_bytes)
+        buffer = QBuffer(data)
+        buffer.open(QIODevice.OpenModeFlag.ReadOnly)
+        sink = QAudioSink(audio_format, self.qt_app)
+        sink.setVolume(0.75)
+        playback = ActiveSoundPlayback(sink=sink, buffer=buffer, data=data)
+        self.active_sound_playbacks.append(playback)
+        sink.stateChanged.connect(
+            lambda state, active_playback=playback: self.cleanup_sound_playback(state, active_playback)
+        )
+        sink.start(buffer)
+
+    def cleanup_sound_playback(self, state: QAudio.State, playback: ActiveSoundPlayback) -> None:
+        if state not in (QAudio.State.IdleState, QAudio.State.StoppedState):
+            return
+
+        if playback not in self.active_sound_playbacks:
+            return
+
+        self.active_sound_playbacks.remove(playback)
+        playback.sink.stop()
+        playback.buffer.close()
+        playback.sink.deleteLater()
+        playback.buffer.deleteLater()
+
+    @staticmethod
+    def make_silence(audio_format: QAudioFormat, milliseconds: int) -> bytes:
+        frame_count = max(0, round(audio_format.sampleRate() * milliseconds / 1000))
+        byte_count = audio_format.bytesForFrames(frame_count)
+        if audio_format.sampleFormat() == QAudioFormat.SampleFormat.UInt8:
+            return b"\x80" * byte_count
+        return b"\x00" * byte_count
 
     def reset_work_timer(self) -> None:
         if self.break_started_at is not None:
@@ -1346,6 +1477,12 @@ class EyeTimerApp:
             overlay.close()
             overlay.deleteLater()
         self.overlay_windows = []
+        for decode in list(self.active_sound_decodes):
+            decode.decoder.stop()
+            decode.decoder.deleteLater()
+        self.active_sound_decodes.clear()
+        for playback in list(self.active_sound_playbacks):
+            self.cleanup_sound_playback(QAudio.State.StoppedState, playback)
         if self.tray_icon is not None:
             self.tray_icon.hide()
             self.tray_icon.deleteLater()

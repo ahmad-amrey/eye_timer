@@ -36,6 +36,7 @@ The settings window can adjust:
 - Idle pause and idle-as-rest timing.
 - Rest overlay and pre-break panel opacity.
 - Whether the countdown starts hidden.
+- Notification tones for rest start and completion.
 - Healthy suggestion messages.
 
 ## Notes
@@ -53,6 +54,8 @@ The settings window can adjust:
   may also need `LSUIElement=true` in its `Info.plist` to hide the Dock icon.
 - On Windows, `icon.ico` is used for native taskbar/window icons and `icon.png`
   is kept as the source image.
+- The notification tone MP3 files must be kept next to `eye_timer.py` when
+  running from source, or bundled next to the executable when packaged.
 - Multiple monitors are handled with Qt's screen APIs.
 - Qt handles the main UI layout and high-DPI behavior, so the app no longer uses
   Tk-specific scaling and size-lock workarounds.
