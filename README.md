@@ -34,6 +34,10 @@ Edit `AppConfig` in `eye_timer.py` to change behavior:
 
 - The overlay is skippable with the `Skip break` button, `Esc`, or `Space`.
 - The pre-break notification can be hidden for the current countdown window.
+- Hovering over the tray/status icon shows the remaining time. The right-click
+  tray menu also shows the remaining time at the top.
+- The control window hides itself when it loses focus, so it behaves like a
+  temporary notification panel.
 - The control window has no taskbar entry while hidden in the tray. If the OS or
   desktop session has no tray/status area, the control window is shown instead.
 - On macOS, Qt exposes the tray icon as a menu-bar status item. A packaged app

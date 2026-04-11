@@ -53,7 +53,7 @@ def set_macos_accessory_activation_policy() -> None:
 set_windows_app_id()
 
 try:
-    from PySide6.QtCore import QPoint, Qt, QTimer
+    from PySide6.QtCore import QEvent, QPoint, Qt, QTimer
     from PySide6.QtGui import QAction, QColor, QCloseEvent, QIcon, QKeyEvent, QMouseEvent, QPaintEvent, QPainter, QScreen
     from PySide6.QtWidgets import (
         QApplication,
@@ -202,6 +202,34 @@ QPushButton#windowButton {{
 
 QPushButton#windowButton:hover {{
     background: #363636;
+}}
+
+QMenu {{
+    background: {BG};
+    color: {TEXT};
+    border: 1px solid #303030;
+    padding: 6px;
+}}
+
+QMenu::item {{
+    background: transparent;
+    color: {TEXT};
+    padding: 9px 34px 9px 16px;
+    min-width: 220px;
+}}
+
+QMenu::item:selected {{
+    background: {BUTTON_SECONDARY_BG};
+}}
+
+QMenu::item:disabled {{
+    color: {MUTED_TEXT};
+}}
+
+QMenu::separator {{
+    height: 1px;
+    background: #303030;
+    margin: 6px 8px;
 }}
 """
 
@@ -482,6 +510,14 @@ class ControlWindow(QWidget):
         self.drag_offset = None
         super().mouseReleaseEvent(event)
 
+    def changeEvent(self, event: QEvent) -> None:
+        super().changeEvent(event)
+        if event.type() != QEvent.Type.ActivationChange:
+            return
+        if self.isActiveWindow() or not self.isVisible():
+            return
+        QTimer.singleShot(0, self.controller.hide_control_window_if_inactive)
+
 
 class BreakOverlay(QWidget):
     def __init__(self, controller: EyeTimerApp, screen: QScreen, suggestion: str) -> None:
@@ -625,7 +661,10 @@ class EyeTimerApp:
         self.app_icon = qt_app.windowIcon()
         self.tray_available = self.config.use_system_tray and QSystemTrayIcon.isSystemTrayAvailable()
         self.tray_icon: QSystemTrayIcon | None = None
+        self.tray_menu: QMenu | None = None
+        self.tray_status_action: QAction | None = None
         self.tray_show_action: QAction | None = None
+        self.tray_menu_open = False
 
         self.control_window = ControlWindow(self)
         self.setup_tray_icon()
@@ -640,9 +679,13 @@ class EyeTimerApp:
             return
 
         tray = QSystemTrayIcon(self.app_icon, self.qt_app)
-        tray.setToolTip("Eye Timer")
 
         menu = QMenu()
+        menu.setMinimumWidth(260)
+        self.tray_status_action = QAction(self.remaining_time_text(), menu)
+        self.tray_status_action.setEnabled(False)
+        menu.addAction(self.tray_status_action)
+        menu.addSeparator()
         self.tray_show_action = QAction("Show Eye Timer", menu)
         self.tray_show_action.triggered.connect(self.toggle_control_window)
         menu.addAction(self.tray_show_action)
@@ -658,11 +701,15 @@ class EyeTimerApp:
         quit_action.triggered.connect(self.stop)
         menu.addAction(quit_action)
 
+        menu.aboutToShow.connect(self.handle_tray_menu_about_to_show)
+        menu.aboutToHide.connect(self.handle_tray_menu_about_to_hide)
         tray.setContextMenu(menu)
         tray.activated.connect(self.handle_tray_activation)
         tray.show()
         self.tray_icon = tray
+        self.tray_menu = menu
         self.update_tray_show_action()
+        self.update_tray_status()
 
     def apply_startup_visibility(self) -> None:
         if self.config.start_minimized and self.tray_icon is not None:
@@ -697,9 +744,38 @@ class EyeTimerApp:
         self.control_window.hide()
         self.update_tray_show_action()
 
+    def hide_control_window_if_inactive(self) -> None:
+        if self.stopping or self.tray_icon is None or self.tray_menu_open:
+            return
+        if self.control_window.isVisible() and not self.control_window.isActiveWindow():
+            self.hide_control_window()
+
+    def handle_tray_menu_about_to_show(self) -> None:
+        self.tray_menu_open = True
+        self.update_tray_status()
+
+    def handle_tray_menu_about_to_hide(self) -> None:
+        self.tray_menu_open = False
+        self.update_tray_status()
+
     def update_tray_show_action(self) -> None:
         if self.tray_show_action is not None:
             self.tray_show_action.setText("Hide Eye Timer" if self.control_window.isVisible() else "Show Eye Timer")
+
+    def update_tray_status(self) -> None:
+        remaining = self.remaining_time_text()
+        if self.tray_icon is not None:
+            self.tray_icon.setToolTip(f"Eye Timer\n{remaining}")
+        if self.tray_status_action is not None:
+            self.tray_status_action.setText(remaining)
+
+    def remaining_time_text(self) -> str:
+        if self.break_started_at is not None:
+            elapsed = time.monotonic() - self.break_started_at
+            remaining = max(0, self.config.rest_duration_seconds - int(elapsed))
+            return f"Break remaining: {remaining}s"
+        seconds_until_break = self.config.rest_interval_seconds - self.active_seconds
+        return format_next_break(max(0, int(seconds_until_break)))
 
     def tick(self) -> None:
         now = time.monotonic()
@@ -711,6 +787,7 @@ class EyeTimerApp:
             self.update_work_timer(elapsed, idle_seconds)
         else:
             self.update_break_overlay(now)
+        self.update_tray_status()
 
     def update_work_timer(self, elapsed: float, idle_seconds: float) -> None:
         if idle_seconds >= self.config.idle_reset_after_seconds:
@@ -836,6 +913,7 @@ class EyeTimerApp:
             self.tray_icon.hide()
             self.tray_icon.deleteLater()
             self.tray_icon = None
+            self.tray_menu = None
         self.qt_app.quit()
 
 
