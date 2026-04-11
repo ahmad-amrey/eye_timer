@@ -376,6 +376,7 @@ class AppConfig:
     overlay_alpha: float = 0.86
     prepare_panel_alpha: float = 0.96
     start_minimized: bool = False
+    start_with_boot: bool = False
     sound_enabled: bool = True
     healthy_suggestions: tuple[str, ...] = (
         "Look at something at least 6 meters away.",
@@ -395,6 +396,7 @@ SAVED_CONFIG_FIELDS = (
     "overlay_alpha",
     "prepare_panel_alpha",
     "start_minimized",
+    "start_with_boot",
     "sound_enabled",
     "healthy_suggestions",
 )
@@ -921,6 +923,23 @@ class SettingsWindow(QWidget):
             "%",
         )
 
+        _os_names = {"windows": "Windows", "darwin": "login", "linux": "login"}
+        _os_label = _os_names.get(platform.system().lower(), "boot")
+        _is_frozen = getattr(sys, "frozen", False)
+        self.start_with_boot = QCheckBox(f"Start with {_os_label}")
+        self.start_with_boot.setEnabled(_is_frozen)
+        _boot_hint = (
+            f"Register Eye Timer to launch automatically when {_os_label} starts."
+            if _is_frozen
+            else "Only available when running the packaged app, not a Python script."
+        )
+        self._add_setting(
+            advanced_grid,
+            "Start with boot",
+            _boot_hint,
+            self.start_with_boot,
+        )
+
         self.start_minimized = QCheckBox("Start hidden")
         self._add_setting(
             advanced_grid,
@@ -1026,6 +1045,7 @@ class SettingsWindow(QWidget):
         )
         for box in spin_boxes:
             box.valueChanged.connect(self.update_save_button_state)
+        self.start_with_boot.toggled.connect(self.update_save_button_state)
         self.start_minimized.toggled.connect(self.update_save_button_state)
         self.sound_enabled.toggled.connect(self.update_save_button_state)
         self.suggestions_text.textChanged.connect(self.update_save_button_state)
@@ -1050,6 +1070,7 @@ class SettingsWindow(QWidget):
             overlay_alpha=self.overlay_opacity_percent.value() / 100,
             prepare_panel_alpha=self.prepare_opacity_percent.value() / 100,
             start_minimized=self.start_minimized.isChecked(),
+            start_with_boot=self.start_with_boot.isChecked(),
             sound_enabled=self.sound_enabled.isChecked(),
             healthy_suggestions=suggestions,
         )
@@ -1073,6 +1094,7 @@ class SettingsWindow(QWidget):
         self.overlay_opacity_percent.setValue(round(config.overlay_alpha * 100))
         self.prepare_opacity_percent.setValue(round(config.prepare_panel_alpha * 100))
         self.start_minimized.setChecked(config.start_minimized)
+        self.start_with_boot.setChecked(config.start_with_boot)
         self.sound_enabled.setChecked(config.sound_enabled)
         self.suggestions_text.setPlainText("\n".join(config.healthy_suggestions))
         self.status_label.setText("")
@@ -1218,6 +1240,7 @@ class EyeTimerApp:
     def apply_settings(self, config: AppConfig) -> Path:
         validate_config(config)
         saved_path = save_config(config)
+        set_autostart(config.start_with_boot)
         self.config = config
         self.timer.setInterval(config.tick_ms)
 
@@ -1536,6 +1559,72 @@ def app_directory() -> Path:
     return Path(__file__).resolve().parent
 
 
+def _autostart_args() -> list[str]:
+    """Return the launch arguments for this app as a list."""
+    if getattr(sys, "frozen", False):
+        return [str(Path(sys.executable).resolve())]
+    return [str(Path(sys.executable).resolve()), str(Path(__file__).resolve())]
+
+
+def set_autostart(enabled: bool) -> None:
+    system = platform.system().lower()
+    if system == "windows":
+        _windows_set_autostart(enabled)
+    elif system == "darwin":
+        _macos_set_autostart(enabled)
+    elif system == "linux":
+        _linux_set_autostart(enabled)
+
+
+def _windows_set_autostart(enabled: bool) -> None:
+    import winreg
+    key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE) as key:
+        if enabled:
+            winreg.SetValueEx(key, "Eye Timer", 0, winreg.REG_SZ, subprocess.list2cmdline(_autostart_args()))
+        else:
+            try:
+                winreg.DeleteValue(key, "Eye Timer")
+            except FileNotFoundError:
+                pass
+
+
+def _macos_set_autostart(enabled: bool) -> None:
+    import plistlib
+    plist_path = Path.home() / "Library" / "LaunchAgents" / "com.eyetimer.app.plist"
+    if enabled:
+        plist = {
+            "Label": "com.eyetimer.app",
+            "ProgramArguments": _autostart_args(),
+            "RunAtLoad": True,
+            "KeepAlive": False,
+        }
+        plist_path.parent.mkdir(parents=True, exist_ok=True)
+        plist_path.write_bytes(plistlib.dumps(plist))
+    else:
+        plist_path.unlink(missing_ok=True)
+
+
+def _linux_set_autostart(enabled: bool) -> None:
+    import shlex
+    config_home = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config")))
+    desktop_path = config_home / "autostart" / "eye-timer.desktop"
+    if enabled:
+        exec_cmd = " ".join(shlex.quote(arg) for arg in _autostart_args())
+        content = (
+            "[Desktop Entry]\n"
+            "Type=Application\n"
+            "Name=Eye Timer\n"
+            f"Exec={exec_cmd}\n"
+            "Hidden=false\n"
+            "X-GNOME-Autostart-enabled=true\n"
+        )
+        desktop_path.parent.mkdir(parents=True, exist_ok=True)
+        desktop_path.write_text(content, encoding="utf-8")
+    else:
+        desktop_path.unlink(missing_ok=True)
+
+
 def save_config(config: AppConfig) -> Path:
     path = settings_file_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1567,6 +1656,10 @@ def load_saved_config(default_config: AppConfig) -> AppConfig:
 def main(config_factory: Callable[[], AppConfig] = AppConfig) -> int:
     config = load_saved_config(config_factory())
     validate_config(config)
+    try:
+        set_autostart(config.start_with_boot)
+    except Exception:
+        pass
 
     set_windows_app_id()
     qt_app = QApplication(sys.argv)
