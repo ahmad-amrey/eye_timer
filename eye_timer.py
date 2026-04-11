@@ -1603,8 +1603,18 @@ def app_directory() -> Path:
 def _autostart_args() -> list[str]:
     """Return the launch arguments for this app as a list."""
     if IS_PACKAGED:
-        return [str(Path(sys.executable).resolve())]
+        return [str(_packaged_executable_path())]
     return [str(Path(sys.executable).resolve()), str(Path(__file__).resolve())]
+
+
+def _packaged_executable_path() -> Path:
+    if sys.argv and sys.argv[0]:
+        argv_path = Path(sys.argv[0])
+        if not argv_path.is_absolute():
+            found = shutil.which(sys.argv[0])
+            argv_path = Path(found) if found else argv_path
+        return argv_path.resolve()
+    return Path(sys.executable).resolve()
 
 
 def set_autostart(enabled: bool) -> None:
@@ -1630,17 +1640,22 @@ def _windows_set_autostart(enabled: bool) -> None:
     if not enabled:
         shortcut.unlink(missing_ok=True)
         return
+    shortcut.parent.mkdir(parents=True, exist_ok=True)
     target = _autostart_args()[0]
     ps = "; ".join([
         "$ws = New-Object -ComObject WScript.Shell",
-        f"$s = $ws.CreateShortcut('{shortcut}')",
-        f"$s.TargetPath = '{target}'",
+        f"$s = $ws.CreateShortcut({_powershell_string(str(shortcut))})",
+        f"$s.TargetPath = {_powershell_string(target)}",
         "$s.Save()",
     ])
     subprocess.run(
         ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
         check=True,
     )
+
+
+def _powershell_string(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
 
 
 def _macos_set_autostart(enabled: bool) -> None:
@@ -1660,11 +1675,10 @@ def _macos_set_autostart(enabled: bool) -> None:
 
 
 def _linux_set_autostart(enabled: bool) -> None:
-    import shlex
     config_home = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config")))
     desktop_path = config_home / "autostart" / "eye-timer.desktop"
     if enabled:
-        exec_cmd = " ".join(shlex.quote(arg) for arg in _autostart_args())
+        exec_cmd = " ".join(_desktop_exec_arg(arg) for arg in _autostart_args())
         content = (
             "[Desktop Entry]\n"
             "Type=Application\n"
@@ -1677,6 +1691,13 @@ def _linux_set_autostart(enabled: bool) -> None:
         desktop_path.write_text(content, encoding="utf-8")
     else:
         desktop_path.unlink(missing_ok=True)
+
+
+def _desktop_exec_arg(value: str) -> str:
+    if not value or any(char.isspace() or char in '"\\$`' for char in value):
+        escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`")
+        return f'"{escaped}"'
+    return value
 
 
 _single_instance_mutex = None  # Windows: holds the mutex handle alive for the process lifetime

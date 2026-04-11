@@ -5,7 +5,7 @@ A small Python/PySide6 eye-rest reminder for Windows, macOS, and Linux.
 ## Install
 
 ```bash
-pip install -r requirements.txt
+pip install -e .
 ```
 
 ## Run
@@ -21,9 +21,9 @@ immediately, reset the timer, or quit.
 ## Settings
 
 Use `Settings...` from the tray/status icon menu or right-click the floating
-countdown. Settings are saved to `settings.json` next to the running executable
-or next to `eye_timer.py` when running from source, and are applied to the
-running timer immediately.
+countdown. Settings are saved to `settings.json` in the platform user-data
+directory for packaged builds, or next to `eye_timer.py` when running from
+source, and are applied to the running timer immediately.
 
 The settings window shows work interval and rest duration first. Less common
 options are under `Show advanced settings`.

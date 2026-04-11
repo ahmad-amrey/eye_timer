@@ -12,10 +12,10 @@ On first run Nuitka will offer to download MinGW-w64 automatically if no
 C compiler is found — accept it.
 
 Output:
-    dist/EyeTimer.dist/EyeTimer.exe  (Windows)
-    dist/EyeTimer.dist/EyeTimer      (macOS / Linux)
+    dist/eye_timer.dist/EyeTimer.exe  (Windows)
+    dist/eye_timer.dist/EyeTimer      (macOS / Linux)
 
-Distribute the entire EyeTimer.dist/ folder, not just the exe.
+Distribute the entire eye_timer.dist/ folder, not just the exe.
 """
 
 import shutil
@@ -61,7 +61,7 @@ def main() -> None:
     subprocess.run(cmd, check=True, cwd=ROOT)
 
     suffix = ".exe" if sys.platform == "win32" else ""
-    output = DIST / "EyeTimer.dist" / f"EyeTimer{suffix}"
+    output = DIST / "eye_timer.dist" / f"EyeTimer{suffix}"
     print(f"\nDone → {output}")
 
 
