@@ -23,6 +23,10 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable, Iterable
 
+# True when running as a built executable (PyInstaller sets sys.frozen,
+# Nuitka injects __compiled__ into the module's globals).
+IS_PACKAGED: bool = getattr(sys, "frozen", False) or bool(globals().get("__compiled__", False))
+
 ICON_FILE = "icon.png"
 WINDOWS_ICON_FILE = "icon.ico"
 WINDOWS_APP_ID = "EyeTimer.App"
@@ -510,10 +514,19 @@ def make_button(text: str, callback: Callable[[], None], *, primary: bool = Fals
 
 
 def resource_path(filename: str) -> Path:
-    candidates = [Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))]
+    if getattr(sys, "_MEIPASS", None):
+        # PyInstaller onefile: extracted to a temp dir referenced by _MEIPASS
+        candidates = [Path(sys._MEIPASS)]  # type: ignore[attr-defined]
+    elif IS_PACKAGED:
+        # Nuitka onefile: data files are extracted beside sys.executable
+        candidates = [Path(sys.executable).resolve().parent]
+    else:
+        candidates = [Path(__file__).resolve().parent]
+
     app_dir = app_directory()
     if app_dir not in candidates:
         candidates.append(app_dir)
+
     for base_path in candidates:
         path = base_path / filename
         if path.exists():
@@ -925,7 +938,7 @@ class SettingsWindow(QWidget):
 
         _os_names = {"windows": "Windows", "darwin": "login", "linux": "login"}
         _os_label = _os_names.get(platform.system().lower(), "boot")
-        _is_frozen = getattr(sys, "frozen", False)
+        _is_frozen = IS_PACKAGED
         self.start_with_boot = QCheckBox(f"Start with {_os_label}")
         self.start_with_boot.setEnabled(_is_frozen)
         _boot_hint = (
@@ -1554,15 +1567,30 @@ def settings_file_path() -> Path:
 
 
 def app_directory() -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent
+    # In dev: beside the script.
+    # When packaged: platform user-data dir. sys.executable is NOT used here
+    # because Nuitka onefile points it at the temp extraction dir, not the
+    # real exe location.
+    if IS_PACKAGED:
+        system = platform.system().lower()
+        if system == "windows":
+            base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+            return base / "EyeTimer"
+        elif system == "darwin":
+            return Path.home() / "Library" / "Application Support" / "EyeTimer"
+        else:
+            xdg = os.environ.get("XDG_DATA_HOME", "")
+            base = Path(xdg) if xdg else Path.home() / ".local" / "share"
+            return base / "EyeTimer"
     return Path(__file__).resolve().parent
 
 
 def _autostart_args() -> list[str]:
     """Return the launch arguments for this app as a list."""
-    if getattr(sys, "frozen", False):
-        return [str(Path(sys.executable).resolve())]
+    if IS_PACKAGED:
+        # sys.executable is the temp extraction dir in Nuitka onefile mode.
+        # The Nuitka bootstrap sets sys.argv[0] to the original exe path.
+        return [str(Path(sys.argv[0]).resolve())]
     return [str(Path(sys.executable).resolve()), str(Path(__file__).resolve())]
 
 

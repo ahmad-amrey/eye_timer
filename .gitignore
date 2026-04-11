@@ -1,1 +1,16 @@
 settings.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+pyinstaller/
+
+# Build output
+build/
+dist/
+*.build/
+*.dist/
+*.onefile-build/
+eye_timer.cmd
