@@ -18,11 +18,30 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable, Iterable
+
+ICON_FILE = "icon.png"
+WINDOWS_ICON_FILE = "icon.ico"
+WINDOWS_APP_ID = "EyeTimer.App"
+
+
+def set_windows_app_id() -> None:
+    if platform.system().lower() != "windows":
+        return
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID.argtypes = [ctypes.c_wchar_p]
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID.restype = ctypes.c_long
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(WINDOWS_APP_ID)
+    except Exception:
+        pass
+
+
+set_windows_app_id()
 
 try:
     from PySide6.QtCore import QPoint, Qt, QTimer
-    from PySide6.QtGui import QColor, QCloseEvent, QKeyEvent, QMouseEvent, QPaintEvent, QPainter, QScreen
+    from PySide6.QtGui import QColor, QCloseEvent, QIcon, QKeyEvent, QMouseEvent, QPaintEvent, QPainter, QScreen
     from PySide6.QtWidgets import (
         QApplication,
         QFrame,
@@ -58,12 +77,6 @@ QWidget {{
 
 QWidget#controlWindow {{
     background: {BG};
-}}
-
-QLabel#windowCaption {{
-    color: {MUTED_TEXT};
-    font-size: 10pt;
-    font-weight: 700;
 }}
 
 QLabel#appTitle {{
@@ -174,23 +187,6 @@ QPushButton#windowButton {{
 
 QPushButton#windowButton:hover {{
     background: #363636;
-}}
-
-QPushButton#windowCloseButton {{
-    background: {BUTTON_SECONDARY_BG};
-    color: {BUTTON_SECONDARY_FG};
-    border-radius: 8px;
-    padding: 0;
-    min-width: 48px;
-    max-width: 48px;
-    min-height: 28px;
-    max-height: 28px;
-    font-size: 9pt;
-}}
-
-QPushButton#windowCloseButton:hover {{
-    background: #b42318;
-    color: #ffffff;
 }}
 """
 
@@ -322,6 +318,64 @@ def make_button(text: str, callback: Callable[[], None], *, primary: bool = Fals
     return button
 
 
+def resource_path(filename: str) -> Path:
+    base_path = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+    return base_path / filename
+
+
+def load_app_icon() -> QIcon:
+    for filename in icon_filenames():
+        icon_path = resource_path(filename)
+        if icon_path.exists():
+            return QIcon(str(icon_path))
+    return QIcon()
+
+
+def icon_filenames() -> tuple[str, ...]:
+    if platform.system().lower() == "windows":
+        return (WINDOWS_ICON_FILE, ICON_FILE)
+    return (ICON_FILE, WINDOWS_ICON_FILE)
+
+
+def set_native_windows_window_icon(widget: QWidget) -> None:
+    if platform.system().lower() != "windows":
+        return
+
+    icon_path = resource_path(WINDOWS_ICON_FILE)
+    if not icon_path.exists():
+        return
+
+    image_icon = 1
+    lr_load_from_file = 0x00000010
+    lr_default_size = 0x00000040
+    wm_set_icon = 0x0080
+    icon_small = 0
+    icon_big = 1
+
+    try:
+        user32 = ctypes.windll.user32
+        user32.LoadImageW.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_wchar_p,
+            ctypes.c_uint,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_uint,
+        ]
+        user32.LoadImageW.restype = ctypes.c_void_p
+        user32.SendMessageW.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctypes.c_void_p]
+        user32.SendMessageW.restype = ctypes.c_void_p
+        hicon = user32.LoadImageW(None, str(icon_path), image_icon, 0, 0, lr_load_from_file | lr_default_size)
+        if not hicon:
+            return
+        hwnd = ctypes.c_void_p(int(widget.winId()))
+        user32.SendMessageW(hwnd, wm_set_icon, icon_small, hicon)
+        user32.SendMessageW(hwnd, wm_set_icon, icon_big, hicon)
+        widget._native_windows_icons = getattr(widget, "_native_windows_icons", []) + [hicon]
+    except Exception:
+        pass
+
+
 class ControlWindow(QWidget):
     def __init__(self, controller: EyeTimerApp) -> None:
         super().__init__()
@@ -329,9 +383,11 @@ class ControlWindow(QWidget):
         self.drag_offset: QPoint | None = None
         self.setObjectName("controlWindow")
         self.setWindowTitle("Eye Timer")
+        self.setWindowIcon(controller.app_icon)
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window)
         self.setMinimumWidth(520)
         self._build()
+        set_native_windows_window_icon(self)
 
     def _build(self) -> None:
         layout = QVBoxLayout(self)
@@ -341,23 +397,13 @@ class ControlWindow(QWidget):
         title_bar = QHBoxLayout()
         title_bar.setContentsMargins(0, 0, 0, 8)
         title_bar.setSpacing(8)
-
-        caption = QLabel("Eye Timer")
-        caption.setObjectName("windowCaption")
-        title_bar.addWidget(caption)
         title_bar.addStretch(1)
 
-        minimize = QPushButton("Min")
+        minimize = QPushButton("_")
         minimize.setObjectName("windowButton")
         minimize.setCursor(Qt.CursorShape.PointingHandCursor)
         minimize.clicked.connect(self.showMinimized)
         title_bar.addWidget(minimize)
-
-        close = QPushButton("Close")
-        close.setObjectName("windowCloseButton")
-        close.setCursor(Qt.CursorShape.PointingHandCursor)
-        close.clicked.connect(self.controller.stop)
-        title_bar.addWidget(close)
         layout.addLayout(title_bar)
 
         title = QLabel("Eye Timer")
@@ -553,6 +599,7 @@ class EyeTimerApp:
         self.prepare_panel: PreparePanel | None = None
         self.prepare_panel_dismissed = False
         self.stopping = False
+        self.app_icon = qt_app.windowIcon()
 
         self.control_window = ControlWindow(self)
         self.control_window.show()
@@ -725,8 +772,12 @@ def main(config_factory: Callable[[], AppConfig] = AppConfig) -> int:
     config = config_factory()
     validate_config(config)
 
+    set_windows_app_id()
     qt_app = QApplication(sys.argv)
     qt_app.setApplicationName("Eye Timer")
+    qt_app.setApplicationDisplayName("Eye Timer")
+    qt_app.setDesktopFileName(WINDOWS_APP_ID)
+    qt_app.setWindowIcon(load_app_icon())
     qt_app.setQuitOnLastWindowClosed(False)
     qt_app.setStyleSheet(APP_STYLE)
     controller = EyeTimerApp(qt_app, config)

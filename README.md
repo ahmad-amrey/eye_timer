@@ -32,6 +32,8 @@ Edit `AppConfig` in `eye_timer.py` to change behavior:
 
 - The overlay is skippable with the `Skip break` button, `Esc`, or `Space`.
 - The pre-break notification can be hidden for the current countdown window.
+- On Windows, `icon.ico` is used for native taskbar/window icons and `icon.png`
+  is kept as the source image.
 - Multiple monitors are handled with Qt's screen APIs.
 - Qt handles the main UI layout and high-DPI behavior, so the app no longer uses
   Tk-specific scaling and size-lock workarounds.
