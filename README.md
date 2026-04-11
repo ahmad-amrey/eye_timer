@@ -1,6 +1,21 @@
 # Eye Timer
 
-A small Python/PySide6 eye-rest reminder for Windows, macOS, and Linux.
+A small eye-rest reminder for Windows, macOS, and Linux.
+
+## Features
+
+![Eye Timer screenshot](readme-assets/Screenshot.png)
+
+- System tray/menu bar/status-area timer.
+- Floating always-on-top countdown.
+- Full-screen rest overlay with skip support.
+- Pre-break notification panel.
+- Configurable work interval, rest duration, idle behavior, opacity, notification
+  tones, and healthy suggestion messages.
+
+## Disclaimer
+
+This project was built by AI, but tested on Windows 11.
 
 ## Install
 
