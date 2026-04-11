@@ -4,9 +4,8 @@ Cross-platform eye resting reminder.
 Run:
     python eye_timer.py
 
-Configuration lives in the AppConfig dataclass below. The defaults implement a
-20-20 style reminder: every 20 active minutes, show a 20 second full-screen
-overlay, preceded by a small warning panel.
+Install dependency:
+    pip install PySide6
 """
 
 from __future__ import annotations
@@ -16,10 +15,26 @@ import platform
 import re
 import shutil
 import subprocess
+import sys
 import time
-import tkinter as tk
 from dataclasses import dataclass
 from typing import Callable, Iterable
+
+try:
+    from PySide6.QtCore import QPoint, Qt, QTimer
+    from PySide6.QtGui import QColor, QCloseEvent, QKeyEvent, QMouseEvent, QPaintEvent, QPainter, QScreen
+    from PySide6.QtWidgets import (
+        QApplication,
+        QFrame,
+        QHBoxLayout,
+        QLabel,
+        QPushButton,
+        QSizePolicy,
+        QVBoxLayout,
+        QWidget,
+    )
+except ModuleNotFoundError as exc:
+    raise SystemExit("PySide6 is required. Install it with: pip install PySide6") from exc
 
 
 BG = "#101010"
@@ -34,9 +49,155 @@ BUTTON_SECONDARY_BG = "#2a2a2a"
 BUTTON_SECONDARY_FG = "#f5f5f5"
 
 
+APP_STYLE = f"""
+QWidget {{
+    font-family: "Segoe UI", "Inter", "Arial";
+    background: {BG};
+    color: {TEXT};
+}}
+
+QWidget#controlWindow {{
+    background: {BG};
+}}
+
+QLabel#windowCaption {{
+    color: {MUTED_TEXT};
+    font-size: 10pt;
+    font-weight: 700;
+}}
+
+QLabel#appTitle {{
+    font-size: 22pt;
+    font-weight: 700;
+}}
+
+QLabel#statusLabel {{
+    color: {MUTED_TEXT};
+    font-size: 11pt;
+}}
+
+QLabel#nextBreakLabel {{
+    color: {ACCENT};
+    font-size: 17pt;
+    font-weight: 700;
+}}
+
+QWidget#overlayWindow {{
+    background-color: rgba(16, 16, 16, 220);
+}}
+
+QLabel#overlayTitle {{
+    color: {TEXT};
+    background: transparent;
+    font-size: 34pt;
+    font-weight: 700;
+}}
+
+QLabel#overlayCountdown {{
+    color: {TEXT};
+    background: transparent;
+    font-size: 88pt;
+    font-weight: 800;
+}}
+
+QLabel#overlaySuggestion {{
+    color: {ACCENT};
+    background: transparent;
+    font-size: 20pt;
+}}
+
+QWidget#preparePanel {{
+    background: {PANEL_BG};
+}}
+
+QFrame#prepareAccent {{
+    background: {ACCENT_DARK};
+}}
+
+QLabel#prepareTitle {{
+    color: {TEXT};
+    background: transparent;
+    font-size: 15pt;
+    font-weight: 700;
+}}
+
+QLabel#prepareCountdown {{
+    color: {ACCENT};
+    background: transparent;
+    font-size: 12pt;
+    font-weight: 700;
+}}
+
+QLabel#prepareMessage {{
+    color: {MUTED_TEXT};
+    background: transparent;
+    font-size: 10pt;
+}}
+
+QPushButton {{
+    border: 0;
+    border-radius: 8px;
+    padding: 9px 18px;
+    font-size: 10pt;
+    font-weight: 700;
+}}
+
+QPushButton#primaryButton {{
+    background: {BUTTON_BG};
+    color: {BUTTON_FG};
+}}
+
+QPushButton#primaryButton:hover {{
+    background: #ffffff;
+}}
+
+QPushButton#secondaryButton {{
+    background: {BUTTON_SECONDARY_BG};
+    color: {BUTTON_SECONDARY_FG};
+}}
+
+QPushButton#secondaryButton:hover {{
+    background: #363636;
+}}
+
+QPushButton#windowButton {{
+    background: {BUTTON_SECONDARY_BG};
+    color: {BUTTON_SECONDARY_FG};
+    border-radius: 8px;
+    padding: 0;
+    min-width: 34px;
+    max-width: 34px;
+    min-height: 28px;
+    max-height: 28px;
+    font-size: 9pt;
+}}
+
+QPushButton#windowButton:hover {{
+    background: #363636;
+}}
+
+QPushButton#windowCloseButton {{
+    background: {BUTTON_SECONDARY_BG};
+    color: {BUTTON_SECONDARY_FG};
+    border-radius: 8px;
+    padding: 0;
+    min-width: 48px;
+    max-width: 48px;
+    min-height: 28px;
+    max-height: 28px;
+    font-size: 9pt;
+}}
+
+QPushButton#windowCloseButton:hover {{
+    background: #b42318;
+    color: #ffffff;
+}}
+"""
+
+
 @dataclass(frozen=True)
 class AppConfig:
-    rest_interval_seconds: int = 1 * 60
+    rest_interval_seconds: int = 20 * 60
     rest_duration_seconds: int = 20
     prepare_notice_seconds: int = 20
     idle_pause_after_seconds: int = 60
@@ -52,47 +213,6 @@ class AppConfig:
         "Soften your focus and breathe evenly.",
         "Check your posture while your eyes rest.",
     )
-
-
-@dataclass(frozen=True)
-class Monitor:
-    x: int
-    y: int
-    width: int
-    height: int
-    name: str = "display"
-
-
-def clamp(value: float, minimum: float, maximum: float) -> float:
-    return max(minimum, min(maximum, value))
-
-
-def monitor_scale(monitor: Monitor) -> float:
-    # Base against a 1080p display, but keep extreme monitor sizes usable.
-    return clamp(min(monitor.width / 1920, monitor.height / 1080), 0.85, 1.75)
-
-
-def scaled(value: int, scale: float) -> int:
-    return max(1, int(round(value * scale)))
-
-
-def enable_dpi_awareness() -> None:
-    if platform.system().lower() != "windows":
-        return
-
-    try:
-        ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
-        return
-    except Exception:
-        pass
-
-    try:
-        ctypes.windll.shcore.SetProcessDpiAwareness(2)
-    except Exception:
-        try:
-            ctypes.windll.user32.SetProcessDPIAware()
-        except Exception:
-            pass
 
 
 class IdleDetector:
@@ -194,526 +314,394 @@ class IdleDetector:
         return 0.0
 
 
-def get_monitors(root: tk.Tk) -> list[Monitor]:
-    monitors = _optional_screeninfo_monitors()
-    if monitors:
-        return monitors
-
-    system = platform.system().lower()
-    if system == "windows":
-        monitors = _windows_monitors()
-    elif system == "darwin":
-        monitors = _mac_monitors()
-    elif system == "linux":
-        monitors = _linux_monitors()
-    else:
-        monitors = []
-
-    if monitors:
-        return monitors
-
-    root.update_idletasks()
-    return [Monitor(0, 0, root.winfo_screenwidth(), root.winfo_screenheight(), "primary")]
+def make_button(text: str, callback: Callable[[], None], *, primary: bool = False) -> QPushButton:
+    button = QPushButton(text)
+    button.setObjectName("primaryButton" if primary else "secondaryButton")
+    button.setCursor(Qt.CursorShape.PointingHandCursor)
+    button.clicked.connect(callback)
+    return button
 
 
-def _optional_screeninfo_monitors() -> list[Monitor]:
-    try:
-        from screeninfo import get_monitors as screeninfo_get_monitors  # type: ignore
-    except Exception:
-        return []
+class ControlWindow(QWidget):
+    def __init__(self, controller: EyeTimerApp) -> None:
+        super().__init__()
+        self.controller = controller
+        self.drag_offset: QPoint | None = None
+        self.setObjectName("controlWindow")
+        self.setWindowTitle("Eye Timer")
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window)
+        self.setMinimumWidth(520)
+        self._build()
 
-    monitors: list[Monitor] = []
-    for index, monitor in enumerate(screeninfo_get_monitors(), start=1):
-        monitors.append(
-            Monitor(
-                int(monitor.x),
-                int(monitor.y),
-                int(monitor.width),
-                int(monitor.height),
-                getattr(monitor, "name", f"display-{index}") or f"display-{index}",
-            )
+    def _build(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(22, 18, 22, 24)
+        layout.setSpacing(14)
+
+        title_bar = QHBoxLayout()
+        title_bar.setContentsMargins(0, 0, 0, 8)
+        title_bar.setSpacing(8)
+
+        caption = QLabel("Eye Timer")
+        caption.setObjectName("windowCaption")
+        title_bar.addWidget(caption)
+        title_bar.addStretch(1)
+
+        minimize = QPushButton("Min")
+        minimize.setObjectName("windowButton")
+        minimize.setCursor(Qt.CursorShape.PointingHandCursor)
+        minimize.clicked.connect(self.showMinimized)
+        title_bar.addWidget(minimize)
+
+        close = QPushButton("Close")
+        close.setObjectName("windowCloseButton")
+        close.setCursor(Qt.CursorShape.PointingHandCursor)
+        close.clicked.connect(self.controller.stop)
+        title_bar.addWidget(close)
+        layout.addLayout(title_bar)
+
+        title = QLabel("Eye Timer")
+        title.setObjectName("appTitle")
+        layout.addWidget(title)
+
+        self.status_label = QLabel("Starting.")
+        self.status_label.setObjectName("statusLabel")
+        layout.addWidget(self.status_label)
+
+        self.next_break_label = QLabel(format_next_break(self.controller.config.rest_interval_seconds))
+        self.next_break_label.setObjectName("nextBreakLabel")
+        layout.addWidget(self.next_break_label)
+
+        button_row = QHBoxLayout()
+        button_row.setContentsMargins(0, 10, 0, 0)
+        button_row.setSpacing(10)
+        button_row.addWidget(make_button("Take break now", self.controller.start_break, primary=True))
+        button_row.addWidget(make_button("Reset timer", self.controller.reset_work_timer))
+        button_row.addStretch(1)
+        button_row.addWidget(make_button("Quit", self.controller.stop))
+        layout.addLayout(button_row)
+
+        self.adjustSize()
+        hint = self.sizeHint()
+        self.setFixedSize(max(520, hint.width()), hint.height())
+
+    def set_status(self, text: str) -> None:
+        self.status_label.setText(text)
+
+    def set_next_break(self, text: str) -> None:
+        self.next_break_label.setText(text)
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        self.controller.stop()
+        event.accept()
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton and not isinstance(self.childAt(event.position().toPoint()), QPushButton):
+            self.drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        if self.drag_offset is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            self.move(event.globalPosition().toPoint() - self.drag_offset)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        self.drag_offset = None
+        super().mouseReleaseEvent(event)
+
+
+class BreakOverlay(QWidget):
+    def __init__(self, controller: EyeTimerApp, screen: QScreen, suggestion: str) -> None:
+        super().__init__(None)
+        self.controller = controller
+        self.setObjectName("overlayWindow")
+        alpha = int(max(0.0, min(1.0, controller.config.overlay_alpha)) * 255)
+        self.overlay_color = QColor(16, 16, 16, alpha)
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.Tool
         )
-    return monitors
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setGeometry(screen.geometry())
+        self._build(suggestion)
+
+    def _build(self, suggestion: str) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(80, 80, 80, 80)
+        layout.setSpacing(20)
+        layout.addStretch(1)
+
+        title = QLabel("Rest your eyes")
+        title.setObjectName("overlayTitle")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title)
+
+        self.countdown_label = QLabel(str(self.controller.config.rest_duration_seconds))
+        self.countdown_label.setObjectName("overlayCountdown")
+        self.countdown_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.countdown_label)
+
+        suggestion_label = QLabel(suggestion)
+        suggestion_label.setObjectName("overlaySuggestion")
+        suggestion_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        suggestion_label.setWordWrap(True)
+        suggestion_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        layout.addWidget(suggestion_label)
+
+        skip_row = QHBoxLayout()
+        skip_row.addStretch(1)
+        skip_row.addWidget(make_button("Skip break", lambda: self.controller.finish_break(skipped=True)))
+        skip_row.addStretch(1)
+        layout.addLayout(skip_row)
+
+        layout.addStretch(1)
+
+    def set_remaining(self, seconds: int) -> None:
+        self.countdown_label.setText(str(seconds))
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), self.overlay_color)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        if event.key() in (Qt.Key.Key_Escape, Qt.Key.Key_Space):
+            self.controller.finish_break(skipped=True)
+            return
+        super().keyPressEvent(event)
 
 
-def _windows_monitors() -> list[Monitor]:
-    monitors: list[Monitor] = []
-
-    from ctypes import wintypes
-
-    monitor_enum_proc = ctypes.WINFUNCTYPE(
-        wintypes.BOOL,
-        wintypes.HMONITOR,
-        wintypes.HDC,
-        ctypes.POINTER(wintypes.RECT),
-        wintypes.LPARAM,
-    )
-
-    def callback(_monitor: int, _dc: int, rect: ctypes.POINTER(wintypes.RECT), _data: int) -> int:
-        bounds = rect.contents
-        monitors.append(
-            Monitor(
-                bounds.left,
-                bounds.top,
-                bounds.right - bounds.left,
-                bounds.bottom - bounds.top,
-                f"display-{len(monitors) + 1}",
-            )
+class PreparePanel(QWidget):
+    def __init__(self, controller: EyeTimerApp, screen: QScreen, seconds_until_break: int) -> None:
+        super().__init__(None)
+        self.controller = controller
+        self.screen = screen
+        self.setObjectName("preparePanel")
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.Tool
         )
-        return 1
+        self.setWindowOpacity(controller.config.prepare_panel_alpha)
+        self._build(seconds_until_break)
+        self._position()
 
-    ctypes.windll.user32.EnumDisplayMonitors(0, 0, monitor_enum_proc(callback), 0)
-    return monitors
+    def _build(self, seconds_until_break: int) -> None:
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
+        accent = QFrame()
+        accent.setObjectName("prepareAccent")
+        accent.setFixedWidth(5)
+        outer.addWidget(accent)
 
-def _mac_monitors() -> list[Monitor]:
-    try:
-        import Quartz  # type: ignore
-        result = Quartz.CGGetActiveDisplayList(16, None, None)
-        if not isinstance(result, tuple) or len(result) < 2 or result[0] != 0:
-            return []
-        displays = result[1] or []
+        content = QVBoxLayout()
+        content.setContentsMargins(22, 18, 22, 18)
+        content.setSpacing(8)
+        outer.addLayout(content)
 
-        monitors: list[Monitor] = []
-        for index, display_id in enumerate(displays):
-            bounds = Quartz.CGDisplayBounds(display_id)
-            monitors.append(
-                Monitor(
-                    int(bounds.origin.x),
-                    int(bounds.origin.y),
-                    int(bounds.size.width),
-                    int(bounds.size.height),
-                    f"display-{index + 1}",
-                )
-            )
-        return monitors
-    except Exception:
-        return []
+        header = QHBoxLayout()
+        header.setSpacing(12)
+        title = QLabel("Break soon")
+        title.setObjectName("prepareTitle")
+        header.addWidget(title)
+        header.addStretch(1)
+        header.addWidget(make_button("Hide", self.controller.dismiss_prepare_panel))
+        content.addLayout(header)
 
+        self.countdown_label = QLabel()
+        self.countdown_label.setObjectName("prepareCountdown")
+        content.addWidget(self.countdown_label)
 
-def _linux_monitors() -> list[Monitor]:
-    if not shutil.which("xrandr"):
-        return []
-    try:
-        output = subprocess.check_output(["xrandr", "--query"], text=True, stderr=subprocess.DEVNULL)
-    except Exception:
-        return []
+        message = QLabel("Finish what you are doing and look away.")
+        message.setObjectName("prepareMessage")
+        message.setWordWrap(True)
+        content.addWidget(message)
 
-    monitors: list[Monitor] = []
-    pattern = re.compile(r"\b(\d+)x(\d+)\+(-?\d+)\+(-?\d+)\b")
-    for line in output.splitlines():
-        if " connected" not in line:
-            continue
-        match = pattern.search(line)
-        if not match:
-            continue
-        width, height, x, y = [int(group) for group in match.groups()]
-        name = line.split(maxsplit=1)[0]
-        monitors.append(Monitor(x, y, width, height, name))
-    return monitors
+        self.setFixedWidth(min(460, max(280, self.screen.availableGeometry().width() - 48)))
+        self.set_countdown(seconds_until_break)
+        self.adjustSize()
+
+    def set_countdown(self, seconds_until_break: int) -> None:
+        self.countdown_label.setText(f"Eye rest starts in {seconds_until_break}s")
+        self.adjustSize()
+        self._position()
+
+    def _position(self) -> None:
+        geometry = self.screen.availableGeometry()
+        margin = 24
+        x = geometry.right() - self.width() - margin + 1
+        y = geometry.bottom() - self.height() - margin + 1
+        self.move(x, y)
 
 
 class EyeTimerApp:
-    def __init__(self, root: tk.Tk, config: AppConfig) -> None:
-        self.root = root
+    def __init__(self, qt_app: QApplication, config: AppConfig) -> None:
+        self.qt_app = qt_app
         self.config = config
         self.idle_detector = IdleDetector()
-        self.monitors = get_monitors(root)
-        self.ui_scale = self._root_scale()
         self.active_seconds = 0.0
         self.last_tick = time.monotonic()
         self.break_started_at: float | None = None
         self.suggestion_index = 0
-        self.overlay_windows: list[tk.Toplevel] = []
-        self.countdown_labels: list[tk.Label] = []
-        self.suggestion_labels: list[tk.Label] = []
-        self.prepare_window: tk.Toplevel | None = None
-        self.control_window_size: tuple[int, int] | None = None
-        self.control_window_resize_job: str | None = None
+        self.overlay_windows: list[BreakOverlay] = []
+        self.prepare_panel: PreparePanel | None = None
         self.prepare_panel_dismissed = False
-        self.prepare_countdown_var = tk.StringVar(value="")
-        self.status_var = tk.StringVar(value="Starting.")
-        self.next_break_var = tk.StringVar(value=self._format_next_break(self.config.rest_interval_seconds))
-        self._build_control_window()
-        self._tick()
+        self.stopping = False
 
-    def _build_control_window(self) -> None:
-        scale = self.ui_scale
-        self.root.title("Eye Timer")
-        self.root.configure(background=BG)
-        self.root.geometry(f"{scaled(560, scale)}x{scaled(260, scale)}")
-        self.root.minsize(scaled(520, scale), scaled(240, scale))
-        self.root.resizable(False, False)
-        self.root.protocol("WM_DELETE_WINDOW", self.stop)
-
-        container = tk.Frame(self.root, padx=scaled(24, scale), pady=scaled(22, scale), background=BG)
-        container.pack(fill="both", expand=True)
-
-        tk.Label(
-            container,
-            text="Eye Timer",
-            font=("Segoe UI", 20, "bold"),
-            foreground=TEXT,
-            background=BG,
-        ).pack(anchor="w")
-
-        tk.Label(
-            container,
-            textvariable=self.status_var,
-            font=("Segoe UI", 11),
-            foreground=MUTED_TEXT,
-            background=BG,
-        ).pack(anchor="w", pady=(scaled(16, scale), 0))
-
-        tk.Label(
-            container,
-            textvariable=self.next_break_var,
-            font=("Segoe UI", 16, "bold"),
-            foreground=ACCENT,
-            background=BG,
-        ).pack(anchor="w", pady=(scaled(4, scale), scaled(20, scale)))
-
-        buttons = tk.Frame(container, background=BG)
-        buttons.pack(fill="x", pady=(scaled(2, scale), 0))
-        self._make_button(buttons, "Take break now", self._start_break, primary=True, scale=scale).pack(side="left")
-        self._make_button(buttons, "Reset timer", self._reset_work_timer, scale=scale).pack(side="left", padx=scaled(10, scale))
-        self._make_button(buttons, "Quit", self.stop, scale=scale).pack(side="right")
-
-        self._fit_root_to_content()
-        self.root.bind("<Configure>", self._keep_control_window_size)
-
+        self.control_window = ControlWindow(self)
+        self.control_window.show()
         if self.config.start_minimized:
-            self.root.after(250, self.root.iconify)
+            self.control_window.showMinimized()
 
-    def _tick(self) -> None:
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.tick)
+        self.timer.start(self.config.tick_ms)
+
+    def tick(self) -> None:
         now = time.monotonic()
         elapsed = max(0.0, now - self.last_tick)
         self.last_tick = now
 
         idle_seconds = self.idle_detector.seconds()
         if self.break_started_at is None:
-            self._update_work_timer(elapsed, idle_seconds)
+            self.update_work_timer(elapsed, idle_seconds)
         else:
-            self._update_break_overlay(now)
+            self.update_break_overlay(now)
 
-        self.root.after(self.config.tick_ms, self._tick)
-
-    def _update_work_timer(self, elapsed: float, idle_seconds: float) -> None:
+    def update_work_timer(self, elapsed: float, idle_seconds: float) -> None:
         if idle_seconds >= self.config.idle_reset_after_seconds:
             self.active_seconds = 0.0
             self.prepare_panel_dismissed = False
-            self._hide_prepare_panel()
-            self.status_var.set("Away long enough to count as a rest.")
-            self.next_break_var.set(self._format_next_break(self.config.rest_interval_seconds))
+            self.hide_prepare_panel()
+            self.control_window.set_status("Away long enough to count as a rest.")
+            self.control_window.set_next_break(format_next_break(self.config.rest_interval_seconds))
             return
 
         if idle_seconds < self.config.idle_pause_after_seconds:
             self.active_seconds += elapsed
-            self.status_var.set("Counting active computer use.")
+            self.control_window.set_status("Counting active computer use.")
         else:
             self.prepare_panel_dismissed = False
-            self._hide_prepare_panel()
-            self.status_var.set("Paused while the computer is idle.")
+            self.hide_prepare_panel()
+            self.control_window.set_status("Paused while the computer is idle.")
 
         seconds_until_break = self.config.rest_interval_seconds - self.active_seconds
-        self.next_break_var.set(self._format_next_break(max(0, int(seconds_until_break))))
+        self.control_window.set_next_break(format_next_break(max(0, int(seconds_until_break))))
+
         if seconds_until_break <= 0:
-            self._start_break()
+            self.start_break()
         elif seconds_until_break <= self.config.prepare_notice_seconds:
             if not self.prepare_panel_dismissed:
-                self._show_or_update_prepare_panel(max(1, int(seconds_until_break)))
+                self.show_or_update_prepare_panel(max(1, int(seconds_until_break)))
         else:
             self.prepare_panel_dismissed = False
-            self._hide_prepare_panel()
+            self.hide_prepare_panel()
 
-    def _start_break(self) -> None:
+    def start_break(self) -> None:
         if self.break_started_at is not None:
             return
 
         self.prepare_panel_dismissed = False
-        self._hide_prepare_panel()
+        self.hide_prepare_panel()
         self.break_started_at = time.monotonic()
         suggestion = self.config.healthy_suggestions[self.suggestion_index % len(self.config.healthy_suggestions)]
         self.suggestion_index += 1
 
         self.overlay_windows = []
-        self.countdown_labels = []
-        self.suggestion_labels = []
+        for screen in self.qt_app.screens():
+            overlay = BreakOverlay(self, screen, suggestion)
+            overlay.show()
+            overlay.raise_()
+            self.overlay_windows.append(overlay)
 
-        for monitor in self.monitors:
-            scale = monitor_scale(monitor)
-            window = tk.Toplevel(self.root)
-            window.overrideredirect(True)
-            self._set_window_attribute(window, "-topmost", True)
-            self._set_window_attribute(window, "-alpha", self.config.overlay_alpha)
-            window.configure(background=BG)
-            window.geometry(f"{monitor.width}x{monitor.height}+{monitor.x}+{monitor.y}")
-            window.bind("<Escape>", lambda _event: self._finish_break(skipped=True))
-            window.bind("<space>", lambda _event: self._finish_break(skipped=True))
-            window.bind("<Button-1>", lambda _event: window.focus_force())
+        if self.overlay_windows:
+            self.overlay_windows[0].activateWindow()
+        self.update_break_overlay(time.monotonic())
 
-            content = tk.Frame(window, background=BG, padx=scaled(36, scale), pady=scaled(28, scale))
-            content.place(relx=0.5, rely=0.48, anchor="center")
-
-            title = tk.Label(
-                content,
-                text="Rest your eyes",
-                font=("Segoe UI", scaled(34, scale), "bold"),
-                foreground=TEXT,
-                background=BG,
-            )
-            title.pack(pady=(0, scaled(18, scale)))
-
-            countdown = tk.Label(
-                content,
-                text=str(self.config.rest_duration_seconds),
-                font=("Segoe UI", scaled(96, scale), "bold"),
-                foreground=TEXT,
-                background=BG,
-            )
-            countdown.pack()
-
-            suggestion_label = tk.Label(
-                content,
-                text=suggestion,
-                font=("Segoe UI", scaled(20, scale)),
-                foreground=ACCENT,
-                background=BG,
-                wraplength=max(scaled(340, scale), min(scaled(980, scale), monitor.width - scaled(160, scale))),
-                justify="center",
-            )
-            suggestion_label.pack(pady=(scaled(18, scale), scaled(30, scale)))
-
-            skip = self._make_button(content, "Skip break", lambda: self._finish_break(skipped=True), scale=scale)
-            skip.pack()
-
-            self.overlay_windows.append(window)
-            self.countdown_labels.append(countdown)
-            self.suggestion_labels.append(suggestion_label)
-            window.focus_force()
-
-        self._update_break_overlay(time.monotonic())
-
-    def _update_break_overlay(self, now: float) -> None:
+    def update_break_overlay(self, now: float) -> None:
         if self.break_started_at is None:
             return
 
         elapsed = now - self.break_started_at
         remaining = max(0, self.config.rest_duration_seconds - int(elapsed))
-        self.status_var.set("Resting your eyes.")
-        self.next_break_var.set(f"Break remaining: {remaining}s")
-        for label in self.countdown_labels:
-            label.configure(text=str(remaining))
+        self.control_window.set_status("Resting your eyes.")
+        self.control_window.set_next_break(f"Break remaining: {remaining}s")
+        for overlay in self.overlay_windows:
+            overlay.set_remaining(remaining)
 
         if elapsed >= self.config.rest_duration_seconds:
-            self._finish_break(skipped=False)
+            self.finish_break(skipped=False)
 
-    def _finish_break(self, skipped: bool) -> None:
-        for window in self.overlay_windows:
-            if window.winfo_exists():
-                window.destroy()
+    def finish_break(self, skipped: bool) -> None:
+        for overlay in self.overlay_windows:
+            overlay.close()
+            overlay.deleteLater()
         self.overlay_windows = []
-        self.countdown_labels = []
-        self.suggestion_labels = []
         self.break_started_at = None
         self.active_seconds = 0.0
         self.prepare_panel_dismissed = False
         self.last_tick = time.monotonic()
-        self.status_var.set("Break skipped." if skipped else "Break completed.")
-        self.next_break_var.set(self._format_next_break(self.config.rest_interval_seconds))
+        self.control_window.set_status("Break skipped." if skipped else "Break completed.")
+        self.control_window.set_next_break(format_next_break(self.config.rest_interval_seconds))
 
-    def _reset_work_timer(self) -> None:
+    def reset_work_timer(self) -> None:
         if self.break_started_at is not None:
             return
         self.active_seconds = 0.0
         self.prepare_panel_dismissed = False
-        self._hide_prepare_panel()
-        self.status_var.set("Timer reset.")
-        self.next_break_var.set(self._format_next_break(self.config.rest_interval_seconds))
+        self.hide_prepare_panel()
+        self.control_window.set_status("Timer reset.")
+        self.control_window.set_next_break(format_next_break(self.config.rest_interval_seconds))
 
-    def _show_or_update_prepare_panel(self, seconds_until_break: int) -> None:
+    def show_or_update_prepare_panel(self, seconds_until_break: int) -> None:
         if self.prepare_panel_dismissed:
             return
 
-        self.prepare_countdown_var.set(f"Eye rest starts in {seconds_until_break}s")
-        if self.prepare_window is not None and self.prepare_window.winfo_exists():
+        if self.prepare_panel is not None:
+            self.prepare_panel.set_countdown(seconds_until_break)
+            self.prepare_panel.show()
+            self.prepare_panel.raise_()
             return
 
-        monitor = self._primary_monitor()
-        scale = monitor_scale(monitor)
-        width = min(scaled(460, scale), max(scaled(340, scale), monitor.width - scaled(48, scale)))
-        height = scaled(130, scale)
-        margin = scaled(24, scale)
-        x = monitor.x + monitor.width - width - margin
-        y = monitor.y + monitor.height - height - scaled(56, scale)
+        screen = self.qt_app.primaryScreen()
+        self.prepare_panel = PreparePanel(self, screen, seconds_until_break)
+        self.prepare_panel.show()
+        self.prepare_panel.raise_()
 
-        window = tk.Toplevel(self.root)
-        window.overrideredirect(True)
-        self._set_window_attribute(window, "-topmost", True)
-        self._set_window_attribute(window, "-alpha", self.config.prepare_panel_alpha)
-        window.configure(background=PANEL_BG)
-        window.geometry(f"{width}x{height}+{x}+{y}")
-        window.bind("<Button-1>", lambda _event: window.focus_force())
+    def hide_prepare_panel(self) -> None:
+        if self.prepare_panel is not None:
+            self.prepare_panel.close()
+            self.prepare_panel.deleteLater()
+            self.prepare_panel = None
 
-        accent = tk.Frame(window, width=scaled(5, scale), background=ACCENT_DARK)
-        accent.pack(side="left", fill="y")
-
-        frame = tk.Frame(window, padx=scaled(22, scale), pady=scaled(18, scale), background=PANEL_BG)
-        frame.pack(side="left", fill="both", expand=True)
-
-        title = tk.Label(
-            frame,
-            text="Break soon",
-            font=("Segoe UI", 15, "bold"),
-            foreground=TEXT,
-            background=PANEL_BG,
-            anchor="w",
-        )
-        title.pack(fill="x")
-
-        countdown = tk.Label(
-            frame,
-            textvariable=self.prepare_countdown_var,
-            font=("Segoe UI", 12, "bold"),
-            foreground=ACCENT,
-            background=PANEL_BG,
-            anchor="w",
-        )
-        countdown.pack(fill="x", pady=(scaled(8, scale), scaled(3, scale)))
-
-        message = tk.Label(
-            frame,
-            text="Finish what you are doing and look away.",
-            font=("Segoe UI", 10),
-            foreground=MUTED_TEXT,
-            background=PANEL_BG,
-            anchor="w",
-            wraplength=width - scaled(60, scale),
-            justify="left",
-        )
-        message.pack(fill="x")
-
-        actions = tk.Frame(frame, background=PANEL_BG)
-        actions.pack(fill="x", pady=(scaled(14, scale), 0))
-        self._make_button(actions, "Hide", self._dismiss_prepare_panel, scale=scale).pack(side="left")
-
-        window.update_idletasks()
-        width = max(width, window.winfo_reqwidth())
-        height = max(height, window.winfo_reqheight())
-        x = monitor.x + monitor.width - width - margin
-        y = monitor.y + monitor.height - height - scaled(56, scale)
-        window.geometry(f"{width}x{height}+{x}+{y}")
-
-        self.prepare_window = window
-
-    def _hide_prepare_panel(self) -> None:
-        if self.prepare_window is not None and self.prepare_window.winfo_exists():
-            self.prepare_window.destroy()
-        self.prepare_window = None
-
-    def _dismiss_prepare_panel(self) -> None:
+    def dismiss_prepare_panel(self) -> None:
         self.prepare_panel_dismissed = True
-        self._hide_prepare_panel()
-
-    def _make_button(
-        self,
-        parent: tk.Misc,
-        text: str,
-        command: Callable[[], None],
-        *,
-        primary: bool = False,
-        scale: float = 1.0,
-    ) -> tk.Button:
-        background = BUTTON_BG if primary else BUTTON_SECONDARY_BG
-        foreground = BUTTON_FG if primary else BUTTON_SECONDARY_FG
-        active_background = "#ffffff" if primary else "#363636"
-        button = tk.Button(
-            parent,
-            text=text,
-            command=command,
-            font=("Segoe UI", 10, "bold"),
-            foreground=foreground,
-            background=background,
-            activeforeground=foreground,
-            activebackground=active_background,
-            relief="flat",
-            borderwidth=0,
-            highlightthickness=0,
-            padx=scaled(18, scale),
-            pady=scaled(9, scale),
-            cursor="hand2",
-        )
-        button.bind("<Enter>", lambda _event: button.configure(background=active_background))
-        button.bind("<Leave>", lambda _event: button.configure(background=background))
-        return button
-
-    def _fit_root_to_content(self) -> None:
-        self.root.update_idletasks()
-        width = max(self.root.winfo_width(), self.root.winfo_reqwidth())
-        height = max(self.root.winfo_height(), self.root.winfo_reqheight())
-        self.control_window_size = (width, height)
-        self.root.geometry(f"{width}x{height}")
-        self.root.minsize(width, height)
-        self.root.maxsize(width, height)
-
-    def _keep_control_window_size(self, event: tk.Event) -> None:
-        if event.widget is not self.root or self.control_window_size is None:
-            return
-        if self.root.state() != "normal":
-            return
-
-        width, height = self.control_window_size
-        if event.width == width and event.height == height:
-            return
-        if self.control_window_resize_job is not None:
-            self.root.after_cancel(self.control_window_resize_job)
-        self.control_window_resize_job = self.root.after(50, self._restore_control_window_size)
-
-    def _restore_control_window_size(self) -> None:
-        self.control_window_resize_job = None
-        if self.control_window_size is None or self.root.state() != "normal":
-            return
-        width, height = self.control_window_size
-        self.root.geometry(f"{width}x{height}")
-
-    def _primary_monitor(self) -> Monitor:
-        for monitor in self.monitors:
-            if monitor.x == 0 and monitor.y == 0:
-                return monitor
-        return self.monitors[0]
-
-    def _root_scale(self) -> float:
-        try:
-            return clamp(float(self.root.winfo_fpixels("1i")) / 96.0, 1.0, 1.75)
-        except tk.TclError:
-            return 1.0
-
-    @staticmethod
-    def _set_window_attribute(window: tk.Toplevel, attribute: str, value: object) -> None:
-        try:
-            window.attributes(attribute, value)
-        except tk.TclError:
-            pass
-
-    @staticmethod
-    def _format_next_break(seconds: int) -> str:
-        minutes, remainder = divmod(max(0, seconds), 60)
-        if minutes:
-            return f"Next break in {minutes}m {remainder}s"
-        return f"Next break in {remainder}s"
+        self.hide_prepare_panel()
 
     def stop(self) -> None:
-        if self.control_window_resize_job is not None:
-            try:
-                self.root.after_cancel(self.control_window_resize_job)
-            except tk.TclError:
-                pass
-            self.control_window_resize_job = None
-        self._hide_prepare_panel()
-        for window in self.overlay_windows:
-            if window.winfo_exists():
-                window.destroy()
-        self.root.destroy()
+        if self.stopping:
+            return
+        self.stopping = True
+        self.timer.stop()
+        self.hide_prepare_panel()
+        for overlay in self.overlay_windows:
+            overlay.close()
+            overlay.deleteLater()
+        self.overlay_windows = []
+        self.qt_app.quit()
+
+
+def format_next_break(seconds: int) -> str:
+    minutes, remainder = divmod(max(0, seconds), 60)
+    if minutes:
+        return f"Next break in {minutes}m {remainder}s"
+    return f"Next break in {remainder}s"
 
 
 def validate_config(config: AppConfig) -> None:
@@ -722,7 +710,10 @@ def validate_config(config: AppConfig) -> None:
         (config.rest_duration_seconds > 0, "rest_duration_seconds must be positive"),
         (config.prepare_notice_seconds >= 0, "prepare_notice_seconds cannot be negative"),
         (config.idle_pause_after_seconds >= 0, "idle_pause_after_seconds cannot be negative"),
-        (config.idle_reset_after_seconds >= config.idle_pause_after_seconds, "idle_reset_after_seconds must be >= idle_pause_after_seconds"),
+        (
+            config.idle_reset_after_seconds >= config.idle_pause_after_seconds,
+            "idle_reset_after_seconds must be >= idle_pause_after_seconds",
+        ),
         (bool(config.healthy_suggestions), "healthy_suggestions cannot be empty"),
     )
     errors = [message for is_valid, message in checks if not is_valid]
@@ -730,14 +721,17 @@ def validate_config(config: AppConfig) -> None:
         raise ValueError("; ".join(errors))
 
 
-def main(config_factory: Callable[[], AppConfig] = AppConfig) -> None:
-    enable_dpi_awareness()
+def main(config_factory: Callable[[], AppConfig] = AppConfig) -> int:
     config = config_factory()
     validate_config(config)
-    root = tk.Tk()
-    EyeTimerApp(root, config)
-    root.mainloop()
+
+    qt_app = QApplication(sys.argv)
+    qt_app.setApplicationName("Eye Timer")
+    qt_app.setQuitOnLastWindowClosed(False)
+    qt_app.setStyleSheet(APP_STYLE)
+    controller = EyeTimerApp(qt_app, config)
+    return qt_app.exec()
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

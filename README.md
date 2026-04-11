@@ -1,6 +1,12 @@
 # Eye Timer
 
-A small Python/Tkinter eye-rest reminder for Windows, macOS, and Linux.
+A small Python/PySide6 eye-rest reminder for Windows, macOS, and Linux.
+
+## Install
+
+```bash
+pip install -r requirements.txt
+```
 
 ## Run
 
@@ -26,11 +32,9 @@ Edit `AppConfig` in `eye_timer.py` to change behavior:
 
 - The overlay is skippable with the `Skip break` button, `Esc`, or `Space`.
 - The pre-break notification can be hidden for the current countdown window.
-- The UI opts into Windows DPI awareness and sizes overlay content per monitor,
-  which helps mixed-resolution and mixed-scaling display setups.
-- Multiple monitors are handled without required dependencies on Windows and with
-  best-effort support on macOS/Linux. If the optional `screeninfo` package is
-  installed, the app will use it for monitor enumeration.
+- Multiple monitors are handled with Qt's screen APIs.
+- Qt handles the main UI layout and high-DPI behavior, so the app no longer uses
+  Tk-specific scaling and size-lock workarounds.
 - Idle detection uses OS APIs where possible. On Linux it uses `xprintidle` if
   available, otherwise it tries XScreenSaver through `libXss`; Wayland sessions
   may fall back to counting the user as active because many compositors restrict
