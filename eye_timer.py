@@ -11,13 +11,15 @@ Install dependency:
 from __future__ import annotations
 
 import ctypes
+import json
+import os
 import platform
 import re
 import shutil
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -66,14 +68,20 @@ try:
         QScreen,
     )
     from PySide6.QtWidgets import (
+        QAbstractSpinBox,
         QApplication,
+        QCheckBox,
         QFrame,
+        QGridLayout,
         QHBoxLayout,
         QLabel,
         QMenu,
         QPushButton,
+        QScrollArea,
         QSizePolicy,
+        QSpinBox,
         QSystemTrayIcon,
+        QTextEdit,
         QVBoxLayout,
         QWidget,
     )
@@ -105,11 +113,99 @@ QWidget#countdownWindow {{
     border: 1px solid #4a4a4a;
 }}
 
+QWidget#settingsWindow {{
+    background: {BG};
+}}
+
+QScrollArea {{
+    background: transparent;
+    border: 0;
+}}
+
+QScrollBar:vertical {{
+    background: #2a2a2a;
+    border: 0;
+    width: 12px;
+    margin: 0;
+}}
+
+QScrollBar::handle:vertical {{
+    background: #a6aaa8;
+    border-radius: 6px;
+    min-height: 36px;
+}}
+
+QScrollBar::handle:vertical:hover {{
+    background: #d0d4d2;
+}}
+
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical,
+QScrollBar::add-page:vertical,
+QScrollBar::sub-page:vertical {{
+    background: transparent;
+    border: 0;
+    height: 0;
+}}
+
 QLabel#countdownText {{
     background: transparent;
     color: {ACCENT};
     font-size: 16pt;
     font-weight: 800;
+}}
+
+QLabel#settingsTitle {{
+    background: transparent;
+    color: {TEXT};
+    font-size: 20pt;
+    font-weight: 800;
+}}
+
+QLabel#settingsIntro,
+QLabel#settingsHint,
+QLabel#settingsStatus {{
+    background: transparent;
+    color: {MUTED_TEXT};
+    font-size: 10pt;
+}}
+
+QLabel#settingsLabel {{
+    background: transparent;
+    color: {TEXT};
+    font-size: 11pt;
+    font-weight: 700;
+}}
+
+QSpinBox,
+QTextEdit,
+QCheckBox {{
+    background: #202020;
+    color: {TEXT};
+    border: 1px solid #303030;
+    border-radius: 6px;
+    padding: 7px;
+    selection-background-color: {ACCENT_DARK};
+}}
+
+QSpinBox {{
+    min-width: 130px;
+    max-width: 130px;
+}}
+
+QSpinBox::up-button,
+QSpinBox::down-button {{
+    width: 0;
+    height: 0;
+    border: 0;
+}}
+
+QTextEdit {{
+    min-height: 110px;
+}}
+
+QCheckBox {{
+    padding: 8px;
 }}
 
 QWidget#overlayWindow {{
@@ -181,6 +277,11 @@ QPushButton#primaryButton:hover {{
     background: #ffffff;
 }}
 
+QPushButton#primaryButton:disabled {{
+    background: #3a3a3a;
+    color: #8f9692;
+}}
+
 QPushButton#secondaryButton {{
     background: {BUTTON_SECONDARY_BG};
     color: {BUTTON_SECONDARY_FG};
@@ -188,6 +289,11 @@ QPushButton#secondaryButton {{
 
 QPushButton#secondaryButton:hover {{
     background: #363636;
+}}
+
+QPushButton#secondaryButton:disabled {{
+    background: #202020;
+    color: #686f6b;
 }}
 
 QPushButton#countdownHideButton {{
@@ -249,7 +355,6 @@ class AppConfig:
     overlay_alpha: float = 0.86
     prepare_panel_alpha: float = 0.96
     start_minimized: bool = True
-    use_system_tray: bool = True
     healthy_suggestions: tuple[str, ...] = (
         "Look at something at least 6 meters away.",
         "Close your eyes and relax your shoulders.",
@@ -507,6 +612,27 @@ class CountdownWindow(QWidget):
         self.drag_offset = None
         super().mouseReleaseEvent(event)
 
+    def contextMenuEvent(self, event) -> None:
+        menu = QMenu(self)
+        settings = QAction("Settings...", menu)
+        settings.triggered.connect(self.controller.show_settings_window)
+        menu.addAction(settings)
+        menu.addSeparator()
+        take_break = QAction("Take break now", menu)
+        take_break.triggered.connect(self.controller.start_break)
+        menu.addAction(take_break)
+        reset_timer = QAction("Reset timer", menu)
+        reset_timer.triggered.connect(self.controller.reset_work_timer)
+        menu.addAction(reset_timer)
+        menu.addSeparator()
+        hide_action = QAction("Hide countdown", menu)
+        hide_action.triggered.connect(self.controller.hide_countdown_window)
+        menu.addAction(hide_action)
+        quit_action = QAction("Quit", menu)
+        quit_action.triggered.connect(self.controller.stop)
+        menu.addAction(quit_action)
+        menu.exec(event.globalPos())
+
 
 class BreakOverlay(QWidget):
     def __init__(self, controller: EyeTimerApp, screen: QScreen, suggestion: str) -> None:
@@ -634,6 +760,290 @@ class PreparePanel(QWidget):
         self.move(x, y)
 
 
+class SettingsWindow(QWidget):
+    def __init__(self, controller: EyeTimerApp) -> None:
+        super().__init__(None)
+        self.controller = controller
+        self.loading_settings = False
+        self.setObjectName("settingsWindow")
+        self.setWindowTitle("Eye Timer settings")
+        self.setWindowFilePath("")
+        self.setWindowModified(False)
+        self.setWindowIcon(controller.app_icon)
+        self.setMinimumWidth(620)
+        self._build()
+        self.load_from_config()
+        self.resize(680, min(700, max(380, self.sizeHint().height())))
+        set_native_windows_window_icon(self)
+
+    def _build(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(26, 24, 26, 24)
+        layout.setSpacing(18)
+
+        title = QLabel("Eye Timer settings")
+        title.setObjectName("settingsTitle")
+        layout.addWidget(title)
+
+        intro = QLabel("Changes are saved for future starts and applied to the running timer immediately.")
+        intro.setObjectName("settingsIntro")
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        settings_content = QWidget()
+        settings_layout = QVBoxLayout(settings_content)
+        settings_layout.setContentsMargins(0, 0, 8, 0)
+        settings_layout.setSpacing(16)
+        scroll.setWidget(settings_content)
+
+        essential_grid = self._make_settings_grid()
+        settings_layout.addLayout(essential_grid)
+
+        self.rest_interval_minutes = self._make_spin_box(1, 480)
+        self._add_setting(
+            essential_grid,
+            "Work interval",
+            "Active computer-use time before the full-screen rest overlay appears.",
+            self.rest_interval_minutes,
+            "min",
+        )
+
+        self.rest_duration_seconds = self._make_spin_box(5, 600)
+        self._add_setting(
+            essential_grid,
+            "Rest duration",
+            "How long the full-screen rest overlay remains visible before it closes by itself.",
+            self.rest_duration_seconds,
+            "sec",
+        )
+
+        self.advanced_toggle = make_button("Show advanced settings", self.toggle_advanced_settings)
+        settings_layout.addWidget(self.advanced_toggle)
+
+        self.advanced_settings = QWidget()
+        self.advanced_settings.hide()
+        advanced_layout = QVBoxLayout(self.advanced_settings)
+        advanced_layout.setContentsMargins(0, 0, 0, 0)
+        advanced_layout.setSpacing(16)
+        advanced_grid = self._make_settings_grid()
+        advanced_layout.addLayout(advanced_grid)
+        settings_layout.addWidget(self.advanced_settings)
+
+        self.prepare_notice_seconds = self._make_spin_box(0, 600)
+        self._add_setting(
+            advanced_grid,
+            "Prepare notice",
+            "How early the small pre-break panel appears. Set to 0 to disable the warning period.",
+            self.prepare_notice_seconds,
+            "sec",
+        )
+
+        self.idle_pause_after_minutes = self._make_spin_box(0, 60)
+        self._add_setting(
+            advanced_grid,
+            "Pause when idle after",
+            "If the computer is idle this long, active-use counting pauses instead of moving toward a break.",
+            self.idle_pause_after_minutes,
+            "min",
+        )
+
+        self.idle_reset_after_minutes = self._make_spin_box(1, 240)
+        self._add_setting(
+            advanced_grid,
+            "Count idle as rest after",
+            "If the computer stays idle this long, the app treats it as a completed rest and restarts the interval.",
+            self.idle_reset_after_minutes,
+            "min",
+        )
+
+        self.overlay_opacity_percent = self._make_spin_box(20, 100)
+        self._add_setting(
+            advanced_grid,
+            "Rest overlay opacity",
+            "Higher values make the full-screen rest overlay block more of the desktop behind it.",
+            self.overlay_opacity_percent,
+            "%",
+        )
+
+        self.prepare_opacity_percent = self._make_spin_box(20, 100)
+        self._add_setting(
+            advanced_grid,
+            "Prepare panel opacity",
+            "Higher values make the small pre-break panel less transparent.",
+            self.prepare_opacity_percent,
+            "%",
+        )
+
+        self.start_minimized = QCheckBox("Start hidden")
+        self._add_setting(
+            advanced_grid,
+            "Start hidden in tray",
+            "Takes effect next launch. When enabled, the countdown stays hidden until opened from the tray/status icon.",
+            self.start_minimized,
+        )
+
+        suggestions_label = QLabel("Healthy suggestions")
+        suggestions_label.setObjectName("settingsLabel")
+        advanced_layout.addWidget(suggestions_label)
+        suggestions_hint = QLabel("One suggestion per line. The rest overlay cycles through these messages.")
+        suggestions_hint.setObjectName("settingsHint")
+        suggestions_hint.setWordWrap(True)
+        advanced_layout.addWidget(suggestions_hint)
+        self.suggestions_text = QTextEdit()
+        advanced_layout.addWidget(self.suggestions_text)
+
+        settings_layout.addStretch(1)
+        layout.addWidget(scroll)
+
+        self.status_label = QLabel("")
+        self.status_label.setObjectName("settingsStatus")
+        self.status_label.setWordWrap(True)
+        layout.addWidget(self.status_label)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+        button_row.addWidget(make_button("Close", self.close))
+        self.save_button = make_button("Save settings", self.save_settings, primary=True)
+        self.set_save_button_changed(False)
+        button_row.addWidget(self.save_button)
+        layout.addLayout(button_row)
+
+        self._connect_change_signals()
+
+    def _make_spin_box(self, minimum: int, maximum: int) -> QSpinBox:
+        box = QSpinBox()
+        box.setRange(minimum, maximum)
+        box.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        return box
+
+    def _make_settings_grid(self) -> QGridLayout:
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(16)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnMinimumWidth(1, 130)
+        grid.setColumnMinimumWidth(2, 32)
+        grid.setProperty("nextRow", 0)
+        return grid
+
+    def _add_setting(self, layout: QGridLayout, label: str, hint: str, widget: QWidget, unit: str = "") -> None:
+        text_column = QVBoxLayout()
+        text_column.setSpacing(4)
+        title = QLabel(label)
+        title.setObjectName("settingsLabel")
+        text_column.addWidget(title)
+        description = QLabel(hint)
+        description.setObjectName("settingsHint")
+        description.setWordWrap(True)
+        text_column.addWidget(description)
+
+        unit_label = None
+        if unit:
+            unit_label = QLabel(unit)
+            unit_label.setObjectName("settingsHint")
+            unit_label.setMinimumWidth(32)
+
+        row = int(layout.property("nextRow") or 0)
+        layout.addLayout(text_column, row, 0)
+        layout.addWidget(widget, row, 1, Qt.AlignmentFlag.AlignTop)
+        if unit_label is not None:
+            control_height = max(widget.sizeHint().height(), unit_label.sizeHint().height())
+            unit_label.setFixedHeight(control_height)
+            unit_label.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+            layout.addWidget(unit_label, row, 2, Qt.AlignmentFlag.AlignTop)
+        layout.setProperty("nextRow", row + 1)
+
+    def toggle_advanced_settings(self) -> None:
+        is_visible = self.advanced_settings.isVisible()
+        self.advanced_settings.setVisible(not is_visible)
+        self.advanced_toggle.setText("Show advanced settings" if is_visible else "Hide advanced settings")
+
+    def _connect_change_signals(self) -> None:
+        spin_boxes = (
+            self.rest_interval_minutes,
+            self.rest_duration_seconds,
+            self.prepare_notice_seconds,
+            self.idle_pause_after_minutes,
+            self.idle_reset_after_minutes,
+            self.overlay_opacity_percent,
+            self.prepare_opacity_percent,
+        )
+        for box in spin_boxes:
+            box.valueChanged.connect(self.update_save_button_state)
+        self.start_minimized.toggled.connect(self.update_save_button_state)
+        self.suggestions_text.textChanged.connect(self.update_save_button_state)
+
+    def set_save_button_changed(self, has_changes: bool) -> None:
+        self.save_button.setEnabled(has_changes)
+        self.save_button.setText("Save settings" if has_changes else "Saved")
+
+    def _current_form_config(self) -> AppConfig:
+        suggestions = tuple(
+            line.strip()
+            for line in self.suggestions_text.toPlainText().splitlines()
+            if line.strip()
+        )
+        return replace(
+            self.controller.config,
+            rest_interval_seconds=self.rest_interval_minutes.value() * 60,
+            rest_duration_seconds=self.rest_duration_seconds.value(),
+            prepare_notice_seconds=self.prepare_notice_seconds.value(),
+            idle_pause_after_seconds=self.idle_pause_after_minutes.value() * 60,
+            idle_reset_after_seconds=self.idle_reset_after_minutes.value() * 60,
+            overlay_alpha=self.overlay_opacity_percent.value() / 100,
+            prepare_panel_alpha=self.prepare_opacity_percent.value() / 100,
+            start_minimized=self.start_minimized.isChecked(),
+            healthy_suggestions=suggestions,
+        )
+
+    def update_save_button_state(self) -> None:
+        if self.loading_settings:
+            return
+        self.set_save_button_changed(self._current_form_config() != self.controller.config)
+        self.status_label.setText("")
+
+    def load_from_config(self) -> None:
+        self.loading_settings = True
+        config = self.controller.config
+        self.advanced_settings.hide()
+        self.advanced_toggle.setText("Show advanced settings")
+        self.rest_interval_minutes.setValue(max(1, round(config.rest_interval_seconds / 60)))
+        self.rest_duration_seconds.setValue(config.rest_duration_seconds)
+        self.prepare_notice_seconds.setValue(config.prepare_notice_seconds)
+        self.idle_pause_after_minutes.setValue(max(0, round(config.idle_pause_after_seconds / 60)))
+        self.idle_reset_after_minutes.setValue(max(1, round(config.idle_reset_after_seconds / 60)))
+        self.overlay_opacity_percent.setValue(round(config.overlay_alpha * 100))
+        self.prepare_opacity_percent.setValue(round(config.prepare_panel_alpha * 100))
+        self.start_minimized.setChecked(config.start_minimized)
+        self.suggestions_text.setPlainText("\n".join(config.healthy_suggestions))
+        self.status_label.setText("")
+        self.set_save_button_changed(False)
+        self.loading_settings = False
+
+    def save_settings(self) -> None:
+        config = self._current_form_config()
+
+        try:
+            self.controller.apply_settings(config)
+        except Exception as exc:
+            self.status_label.setText(f"Settings were not saved: {exc}")
+            return
+
+        self.set_save_button_changed(False)
+        self.status_label.setText(f"Settings saved to {settings_file_path()}")
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self.setWindowTitle("Eye Timer settings")
+        self.setWindowFilePath("")
+        self.setWindowModified(False)
+
+
 class EyeTimerApp:
     def __init__(self, qt_app: QApplication, config: AppConfig) -> None:
         self.qt_app = qt_app
@@ -648,11 +1058,12 @@ class EyeTimerApp:
         self.prepare_panel_dismissed = False
         self.stopping = False
         self.app_icon = qt_app.windowIcon()
-        self.tray_available = self.config.use_system_tray and QSystemTrayIcon.isSystemTrayAvailable()
+        self.tray_available = QSystemTrayIcon.isSystemTrayAvailable()
         self.tray_icon: QSystemTrayIcon | None = None
         self.tray_menu: QMenu | None = None
         self.tray_status_action: QAction | None = None
         self.tray_show_action: QAction | None = None
+        self.settings_window: SettingsWindow | None = None
 
         self.countdown_window = CountdownWindow(self)
         self.setup_tray_icon()
@@ -677,6 +1088,9 @@ class EyeTimerApp:
         self.tray_show_action = QAction("Show countdown", menu)
         self.tray_show_action.triggered.connect(self.toggle_countdown_window)
         menu.addAction(self.tray_show_action)
+        settings = QAction("Settings...", menu)
+        settings.triggered.connect(self.show_settings_window)
+        menu.addAction(settings)
         menu.addSeparator()
         take_break = QAction("Take break now", menu)
         take_break.triggered.connect(self.start_break)
@@ -731,6 +1145,35 @@ class EyeTimerApp:
             return
         self.countdown_window.hide()
         self.update_tray_show_action()
+
+    def show_settings_window(self) -> None:
+        if self.settings_window is None:
+            self.settings_window = SettingsWindow(self)
+        else:
+            self.settings_window.load_from_config()
+        self.settings_window.show()
+        self.settings_window.raise_()
+        self.settings_window.activateWindow()
+
+    def apply_settings(self, config: AppConfig) -> None:
+        validate_config(config)
+        save_config(config)
+        self.config = config
+        self.timer.setInterval(config.tick_ms)
+
+        if self.prepare_panel is not None:
+            self.prepare_panel.setWindowOpacity(config.prepare_panel_alpha)
+            self.prepare_panel.adjustSize()
+
+        alpha = int(max(0.0, min(1.0, config.overlay_alpha)) * 255)
+        for overlay in self.overlay_windows:
+            overlay.overlay_color = QColor(16, 16, 16, alpha)
+            overlay.update()
+
+        if self.break_started_at is not None:
+            self.update_break_overlay(time.monotonic())
+
+        self.update_tray_status()
 
     def handle_tray_menu_about_to_show(self) -> None:
         self.update_tray_status()
@@ -915,6 +1358,11 @@ def validate_config(config: AppConfig) -> None:
         (config.rest_duration_seconds > 0, "rest_duration_seconds must be positive"),
         (config.prepare_notice_seconds >= 0, "prepare_notice_seconds cannot be negative"),
         (config.idle_pause_after_seconds >= 0, "idle_pause_after_seconds cannot be negative"),
+        (0.0 <= config.overlay_alpha <= 1.0, "overlay_alpha must be between 0.0 and 1.0"),
+        (
+            0.0 <= config.prepare_panel_alpha <= 1.0,
+            "prepare_panel_alpha must be between 0.0 and 1.0",
+        ),
         (
             config.idle_reset_after_seconds >= config.idle_pause_after_seconds,
             "idle_reset_after_seconds must be >= idle_pause_after_seconds",
@@ -926,8 +1374,46 @@ def validate_config(config: AppConfig) -> None:
         raise ValueError("; ".join(errors))
 
 
+def settings_file_path() -> Path:
+    system = platform.system().lower()
+    if system == "windows":
+        base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+        return base / "Eye Timer" / "settings.json"
+    if system == "darwin":
+        return Path.home() / "Library" / "Application Support" / "Eye Timer" / "settings.json"
+    base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    return base / "eye_timer" / "settings.json"
+
+
+def save_config(config: AppConfig) -> None:
+    path = settings_file_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(asdict(config), indent=2), encoding="utf-8")
+
+
+def load_saved_config(default_config: AppConfig) -> AppConfig:
+    path = settings_file_path()
+    if not path.exists():
+        return default_config
+
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return default_config
+        fields = AppConfig.__dataclass_fields__
+        overrides = {key: value for key, value in data.items() if key in fields}
+        suggestions = overrides.get("healthy_suggestions")
+        if isinstance(suggestions, list):
+            overrides["healthy_suggestions"] = tuple(str(item) for item in suggestions if str(item).strip())
+        config = replace(default_config, **overrides)
+        validate_config(config)
+        return config
+    except Exception:
+        return default_config
+
+
 def main(config_factory: Callable[[], AppConfig] = AppConfig) -> int:
-    config = config_factory()
+    config = load_saved_config(config_factory())
     validate_config(config)
 
     set_windows_app_id()
@@ -938,7 +1424,7 @@ def main(config_factory: Callable[[], AppConfig] = AppConfig) -> int:
     qt_app.setWindowIcon(load_app_icon())
     qt_app.setQuitOnLastWindowClosed(False)
     qt_app.setStyleSheet(APP_STYLE)
-    if config.use_system_tray and config.start_minimized:
+    if config.start_minimized:
         set_macos_accessory_activation_policy()
     controller = EyeTimerApp(qt_app, config)
     return qt_app.exec()
