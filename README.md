@@ -21,8 +21,9 @@ immediately, reset the timer, or quit.
 ## Settings
 
 Use `Settings...` from the tray/status icon menu or right-click the floating
-countdown. Settings are saved as JSON under the current user's app config
-directory and are applied to the running timer immediately.
+countdown. Settings are saved to `settings.json` next to the running executable
+or next to `eye_timer.py` when running from source, and are applied to the
+running timer immediately.
 
 The settings window shows work interval and rest duration first. Less common
 options are under `Show advanced settings`.

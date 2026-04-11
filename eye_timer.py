@@ -19,7 +19,7 @@ import shutil
 import subprocess
 import sys
 import time
-from dataclasses import asdict, dataclass, replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -354,7 +354,7 @@ class AppConfig:
     tick_ms: int = 1000
     overlay_alpha: float = 0.86
     prepare_panel_alpha: float = 0.96
-    start_minimized: bool = True
+    start_minimized: bool = False
     healthy_suggestions: tuple[str, ...] = (
         "Look at something at least 6 meters away.",
         "Close your eyes and relax your shoulders.",
@@ -362,6 +362,19 @@ class AppConfig:
         "Soften your focus and breathe evenly.",
         "Check your posture while your eyes rest.",
     )
+
+
+SAVED_CONFIG_FIELDS = (
+    "rest_interval_seconds",
+    "rest_duration_seconds",
+    "prepare_notice_seconds",
+    "idle_pause_after_seconds",
+    "idle_reset_after_seconds",
+    "overlay_alpha",
+    "prepare_panel_alpha",
+    "start_minimized",
+    "healthy_suggestions",
+)
 
 
 class IdleDetector:
@@ -882,7 +895,7 @@ class SettingsWindow(QWidget):
         self._add_setting(
             advanced_grid,
             "Start hidden in tray",
-            "Takes effect next launch. When enabled, the countdown stays hidden until opened from the tray/status icon.",
+            "Takes effect next launch. Off by default, so the countdown starts visible.",
             self.start_minimized,
         )
 
@@ -1029,13 +1042,13 @@ class SettingsWindow(QWidget):
         config = self._current_form_config()
 
         try:
-            self.controller.apply_settings(config)
+            saved_path = self.controller.apply_settings(config)
         except Exception as exc:
             self.status_label.setText(f"Settings were not saved: {exc}")
             return
 
         self.set_save_button_changed(False)
-        self.status_label.setText(f"Settings saved to {settings_file_path()}")
+        self.status_label.setText(f"Settings saved to {saved_path}")
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
@@ -1155,9 +1168,9 @@ class EyeTimerApp:
         self.settings_window.raise_()
         self.settings_window.activateWindow()
 
-    def apply_settings(self, config: AppConfig) -> None:
+    def apply_settings(self, config: AppConfig) -> Path:
         validate_config(config)
-        save_config(config)
+        saved_path = save_config(config)
         self.config = config
         self.timer.setInterval(config.tick_ms)
 
@@ -1174,6 +1187,7 @@ class EyeTimerApp:
             self.update_break_overlay(time.monotonic())
 
         self.update_tray_status()
+        return saved_path
 
     def handle_tray_menu_about_to_show(self) -> None:
         self.update_tray_status()
@@ -1375,20 +1389,21 @@ def validate_config(config: AppConfig) -> None:
 
 
 def settings_file_path() -> Path:
-    system = platform.system().lower()
-    if system == "windows":
-        base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
-        return base / "Eye Timer" / "settings.json"
-    if system == "darwin":
-        return Path.home() / "Library" / "Application Support" / "Eye Timer" / "settings.json"
-    base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-    return base / "eye_timer" / "settings.json"
+    return app_directory() / "settings.json"
 
 
-def save_config(config: AppConfig) -> None:
+def app_directory() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+def save_config(config: AppConfig) -> Path:
     path = settings_file_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(asdict(config), indent=2), encoding="utf-8")
+    data = {field: getattr(config, field) for field in SAVED_CONFIG_FIELDS}
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    return path
 
 
 def load_saved_config(default_config: AppConfig) -> AppConfig:
@@ -1400,8 +1415,7 @@ def load_saved_config(default_config: AppConfig) -> AppConfig:
         data = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
             return default_config
-        fields = AppConfig.__dataclass_fields__
-        overrides = {key: value for key, value in data.items() if key in fields}
+        overrides = {key: value for key, value in data.items() if key in SAVED_CONFIG_FIELDS}
         suggestions = overrides.get("healthy_suggestions")
         if isinstance(suggestions, list):
             overrides["healthy_suggestions"] = tuple(str(item) for item in suggestions if str(item).strip())
