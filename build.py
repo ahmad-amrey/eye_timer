@@ -12,8 +12,10 @@ On first run Nuitka will offer to download MinGW-w64 automatically if no
 C compiler is found — accept it.
 
 Output:
-    dist/EyeTimer.exe  (Windows)
-    dist/EyeTimer      (macOS / Linux)
+    dist/EyeTimer.dist/EyeTimer.exe  (Windows)
+    dist/EyeTimer.dist/EyeTimer      (macOS / Linux)
+
+Distribute the entire EyeTimer.dist/ folder, not just the exe.
 """
 
 import shutil
@@ -38,7 +40,7 @@ def main() -> None:
 
     cmd = [
         sys.executable, "-m", "nuitka",
-        "--onefile",
+        "--standalone",           # single process; produces a folder instead of one file
         "--enable-plugin=pyside6",
         "--include-qt-plugins=multimedia",
         "--output-dir=dist",
@@ -59,7 +61,8 @@ def main() -> None:
     subprocess.run(cmd, check=True, cwd=ROOT)
 
     suffix = ".exe" if sys.platform == "win32" else ""
-    print(f"\nDone → {DIST / f'EyeTimer{suffix}'}")
+    output = DIST / "EyeTimer.dist" / f"EyeTimer{suffix}"
+    print(f"\nDone → {output}")
 
 
 if __name__ == "__main__":

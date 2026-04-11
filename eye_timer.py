@@ -23,9 +23,25 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable, Iterable
 
-# True when running as a built executable (PyInstaller sets sys.frozen,
-# Nuitka injects __compiled__ into the module's globals).
-IS_PACKAGED: bool = getattr(sys, "frozen", False) or bool(globals().get("__compiled__", False))
+def _detect_packaged() -> bool:
+    if getattr(sys, "frozen", False):   # PyInstaller
+        return True
+    try:
+        if __compiled__:                # type: ignore[name-defined]  # Nuitka
+            return True
+    except NameError:
+        pass
+
+    # Fallback: in a packaged build sys.executable is usually the compiled
+    # binary (e.g. EyeTimer.exe), not a Python interpreter.
+    executable_stem = Path(sys.executable).stem.lower()
+    if executable_stem.startswith("python") or executable_stem == "py":
+        return False
+    if executable_stem in {"eyetimer", "eye_timer"}:
+        return True
+    return Path(sys.executable).resolve() != Path(__file__).resolve()
+
+IS_PACKAGED: bool = _detect_packaged()
 
 ICON_FILE = "icon.png"
 WINDOWS_ICON_FILE = "icon.ico"
@@ -517,15 +533,12 @@ def resource_path(filename: str) -> Path:
     if getattr(sys, "_MEIPASS", None):
         # PyInstaller onefile: extracted to a temp dir referenced by _MEIPASS
         candidates = [Path(sys._MEIPASS)]  # type: ignore[attr-defined]
-    elif IS_PACKAGED:
-        # Nuitka onefile: data files are extracted beside sys.executable
-        candidates = [Path(sys.executable).resolve().parent]
     else:
-        candidates = [Path(__file__).resolve().parent]
-
-    app_dir = app_directory()
-    if app_dir not in candidates:
-        candidates.append(app_dir)
+        # Dev or Nuitka standalone: data files sit beside the exe / script
+        candidates = [Path(sys.executable).resolve().parent]
+        src_dir = Path(__file__).resolve().parent
+        if src_dir not in candidates:
+            candidates.append(src_dir)
 
     for base_path in candidates:
         path = base_path / filename
@@ -1252,8 +1265,10 @@ class EyeTimerApp:
 
     def apply_settings(self, config: AppConfig) -> Path:
         validate_config(config)
+        start_with_boot_changed = config.start_with_boot != self.config.start_with_boot
         saved_path = save_config(config)
-        set_autostart(config.start_with_boot)
+        if start_with_boot_changed:
+            set_autostart(config.start_with_boot)
         self.config = config
         self.timer.setInterval(config.tick_ms)
 
@@ -1588,9 +1603,7 @@ def app_directory() -> Path:
 def _autostart_args() -> list[str]:
     """Return the launch arguments for this app as a list."""
     if IS_PACKAGED:
-        # sys.executable is the temp extraction dir in Nuitka onefile mode.
-        # The Nuitka bootstrap sets sys.argv[0] to the original exe path.
-        return [str(Path(sys.argv[0]).resolve())]
+        return [str(Path(sys.executable).resolve())]
     return [str(Path(sys.executable).resolve()), str(Path(__file__).resolve())]
 
 
@@ -1604,17 +1617,30 @@ def set_autostart(enabled: bool) -> None:
         _linux_set_autostart(enabled)
 
 
+def _windows_startup_shortcut() -> Path:
+    return (
+        Path(os.environ["APPDATA"])
+        / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+        / "Eye Timer.lnk"
+    )
+
+
 def _windows_set_autostart(enabled: bool) -> None:
-    import winreg
-    key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
-    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE) as key:
-        if enabled:
-            winreg.SetValueEx(key, "Eye Timer", 0, winreg.REG_SZ, subprocess.list2cmdline(_autostart_args()))
-        else:
-            try:
-                winreg.DeleteValue(key, "Eye Timer")
-            except FileNotFoundError:
-                pass
+    shortcut = _windows_startup_shortcut()
+    if not enabled:
+        shortcut.unlink(missing_ok=True)
+        return
+    target = _autostart_args()[0]
+    ps = "; ".join([
+        "$ws = New-Object -ComObject WScript.Shell",
+        f"$s = $ws.CreateShortcut('{shortcut}')",
+        f"$s.TargetPath = '{target}'",
+        "$s.Save()",
+    ])
+    subprocess.run(
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+        check=True,
+    )
 
 
 def _macos_set_autostart(enabled: bool) -> None:
@@ -1653,6 +1679,42 @@ def _linux_set_autostart(enabled: bool) -> None:
         desktop_path.unlink(missing_ok=True)
 
 
+_single_instance_mutex = None  # Windows: holds the mutex handle alive for the process lifetime
+
+
+def ensure_single_instance() -> None:
+    """Exit if another instance of the app is already running."""
+    global _single_instance_mutex
+    if platform.system().lower() == "windows":
+        handle = ctypes.windll.kernel32.CreateMutexW(None, True, "EyeTimer.App.SingleInstance")
+        if ctypes.windll.kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
+            ctypes.windll.user32.MessageBoxW(
+                0,
+                "Eye Timer is already running in the system tray.",
+                "Eye Timer",
+                0x40,  # MB_ICONINFORMATION
+            )
+            sys.exit(0)
+        _single_instance_mutex = handle
+    else:
+        _ensure_single_instance_posix()
+
+
+def _ensure_single_instance_posix() -> None:
+    import atexit
+    import tempfile
+    lock = Path(tempfile.gettempdir()) / "eye_timer.lock"
+    if lock.exists():
+        try:
+            pid = int(lock.read_text().strip())
+            os.kill(pid, 0)  # signal 0: check existence without killing
+            sys.exit(0)      # process is alive — another instance is running
+        except (ValueError, ProcessLookupError, PermissionError):
+            pass             # stale lock from a previous crash — overwrite it
+    lock.write_text(str(os.getpid()))
+    atexit.register(lock.unlink, missing_ok=True)
+
+
 def save_config(config: AppConfig) -> Path:
     path = settings_file_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1682,12 +1744,9 @@ def load_saved_config(default_config: AppConfig) -> AppConfig:
 
 
 def main(config_factory: Callable[[], AppConfig] = AppConfig) -> int:
+    ensure_single_instance()
     config = load_saved_config(config_factory())
     validate_config(config)
-    try:
-        set_autostart(config.start_with_boot)
-    except Exception:
-        pass
 
     set_windows_app_id()
     qt_app = QApplication(sys.argv)
