@@ -108,7 +108,6 @@ class ActiveSoundDecode:
 class ActiveSoundPlayback:
     sink: QAudioSink
     buffer: QBuffer
-    data: QByteArray
 
 
 BG = "#101010"
@@ -1401,12 +1400,12 @@ class EyeTimerApp:
         self.start_notification_playback(decode.audio_format, pcm_bytes)
 
     def start_notification_playback(self, audio_format: QAudioFormat, pcm_bytes: bytes) -> None:
-        data = QByteArray(pcm_bytes)
-        buffer = QBuffer(data)
+        buffer = QBuffer()
+        buffer.setData(QByteArray(pcm_bytes))
         buffer.open(QIODevice.OpenModeFlag.ReadOnly)
         sink = QAudioSink(audio_format, self.qt_app)
         sink.setVolume(0.75)
-        playback = ActiveSoundPlayback(sink=sink, buffer=buffer, data=data)
+        playback = ActiveSoundPlayback(sink=sink, buffer=buffer)
         self.active_sound_playbacks.append(playback)
         sink.stateChanged.connect(
             lambda state, active_playback=playback: self.cleanup_sound_playback(state, active_playback)
@@ -1414,15 +1413,17 @@ class EyeTimerApp:
         sink.start(buffer)
 
     def cleanup_sound_playback(self, state: QAudio.State, playback: ActiveSoundPlayback) -> None:
-        if state not in (QAudio.State.IdleState, QAudio.State.StoppedState):
+        if state == QAudio.State.IdleState:
+            playback.sink.stop()
+            return
+
+        if state != QAudio.State.StoppedState:
             return
 
         if playback not in self.active_sound_playbacks:
             return
 
         self.active_sound_playbacks.remove(playback)
-        playback.sink.stop()
-        playback.buffer.close()
         playback.sink.deleteLater()
         playback.buffer.deleteLater()
 
