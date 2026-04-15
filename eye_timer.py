@@ -395,6 +395,7 @@ class AppConfig:
     tick_ms: int = 1000
     overlay_alpha: float = 0.86
     prepare_panel_alpha: float = 0.96
+    countdown_alpha: float = 0.88
     start_minimized: bool = False
     start_with_boot: bool = False
     sound_enabled: bool = True
@@ -415,6 +416,7 @@ SAVED_CONFIG_FIELDS = (
     "idle_reset_after_seconds",
     "overlay_alpha",
     "prepare_panel_alpha",
+    "countdown_alpha",
     "start_minimized",
     "start_with_boot",
     "sound_enabled",
@@ -430,7 +432,7 @@ class IdleDetector:
         elif system == "darwin":
             self._reader = self._mac_idle_seconds
         elif system == "linux":
-            self._reader = self._linux_idle_seconds
+            self._reader = self._select_linux_reader()
         else:
             self._reader = self._unsupported_idle_seconds
 
@@ -466,55 +468,160 @@ class IdleDetector:
         return int(match.group(1)) / 1_000_000_000
 
     @staticmethod
-    def _linux_idle_seconds() -> float:
+    def _select_linux_reader():
+        """Probe once at init to find the best idle backend for this Linux session."""
+        # 1. Try D-Bus (works on both Wayland and X11 with GNOME/KDE/etc.)
+        if IdleDetector._dbus_idle_probe():
+            return IdleDetector._dbus_idle_seconds
+
+        # 2. Try xprintidle (X11 only, requires the tool installed)
         if shutil.which("xprintidle"):
             try:
-                output = subprocess.check_output(["xprintidle"], text=True, stderr=subprocess.DEVNULL)
-                return int(output.strip()) / 1000
+                subprocess.check_output(["xprintidle"], text=True, stderr=subprocess.DEVNULL)
+                return IdleDetector._xprintidle_idle_seconds
             except Exception:
                 pass
 
-        return IdleDetector._linux_xss_idle_seconds()
+        # 3. Try XScreenSaver extension (X11 only), cache handles
+        xss = IdleDetector._xss_init()
+        if xss is not None:
+            return lambda _xss=xss: IdleDetector._linux_xss_idle_seconds_cached(_xss)
+
+        # 4. Nothing works — always return 0 (timer never pauses)
+        return IdleDetector._unsupported_idle_seconds
 
     @staticmethod
-    def _linux_xss_idle_seconds() -> float:
-        lib_x11 = ctypes.cdll.LoadLibrary("libX11.so.6")
-        lib_xss = ctypes.cdll.LoadLibrary("libXss.so.1")
-
-        class XScreenSaverInfo(ctypes.Structure):
-            _fields_ = [
-                ("window", ctypes.c_ulong),
-                ("state", ctypes.c_int),
-                ("kind", ctypes.c_int),
-                ("since", ctypes.c_ulong),
-                ("idle", ctypes.c_ulong),
-                ("eventMask", ctypes.c_ulong),
-            ]
-
-        lib_x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
-        lib_x11.XOpenDisplay.restype = ctypes.c_void_p
-        lib_x11.XDefaultRootWindow.argtypes = [ctypes.c_void_p]
-        lib_x11.XDefaultRootWindow.restype = ctypes.c_ulong
-        lib_x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
-        lib_x11.XCloseDisplay.restype = ctypes.c_int
-        lib_xss.XScreenSaverQueryInfo.argtypes = [
-            ctypes.c_void_p,
-            ctypes.c_ulong,
-            ctypes.POINTER(XScreenSaverInfo),
-        ]
-        lib_xss.XScreenSaverQueryInfo.restype = ctypes.c_int
-
-        display = lib_x11.XOpenDisplay(None)
-        if not display:
-            return 0.0
+    def _dbus_idle_probe() -> bool:
+        """Check if we can read idle time via D-Bus."""
         try:
-            root = lib_x11.XDefaultRootWindow(display)
+            output = subprocess.check_output(
+                [
+                    "dbus-send", "--print-reply", "--dest=org.gnome.Mutter.IdleMonitor",
+                    "/org/gnome/Mutter/IdleMonitor/Core",
+                    "org.gnome.Mutter.IdleMonitor.GetIdletime",
+                ],
+                text=True, stderr=subprocess.DEVNULL, timeout=2,
+            )
+            return "uint64" in output
+        except Exception:
+            pass
+        try:
+            output = subprocess.check_output(
+                [
+                    "dbus-send", "--print-reply", "--dest=org.freedesktop.ScreenSaver",
+                    "/org/freedesktop/ScreenSaver",
+                    "org.freedesktop.ScreenSaver.GetSessionIdleTime",
+                ],
+                text=True, stderr=subprocess.DEVNULL, timeout=2,
+            )
+            return "uint32" in output
+        except Exception:
+            pass
+        return False
+
+    @staticmethod
+    def _dbus_idle_seconds() -> float:
+        # Try Mutter (GNOME) — returns milliseconds as uint64
+        try:
+            output = subprocess.check_output(
+                [
+                    "dbus-send", "--print-reply", "--dest=org.gnome.Mutter.IdleMonitor",
+                    "/org/gnome/Mutter/IdleMonitor/Core",
+                    "org.gnome.Mutter.IdleMonitor.GetIdletime",
+                ],
+                text=True, stderr=subprocess.DEVNULL, timeout=2,
+            )
+            match = re.search(r"uint64\s+(\d+)", output)
+            if match:
+                return int(match.group(1)) / 1000.0
+        except Exception:
+            pass
+        # Try freedesktop ScreenSaver — returns seconds as uint32
+        try:
+            output = subprocess.check_output(
+                [
+                    "dbus-send", "--print-reply", "--dest=org.freedesktop.ScreenSaver",
+                    "/org/freedesktop/ScreenSaver",
+                    "org.freedesktop.ScreenSaver.GetSessionIdleTime",
+                ],
+                text=True, stderr=subprocess.DEVNULL, timeout=2,
+            )
+            match = re.search(r"uint32\s+(\d+)", output)
+            if match:
+                return float(match.group(1))
+        except Exception:
+            pass
+        return 0.0
+
+    @staticmethod
+    def _xprintidle_idle_seconds() -> float:
+        try:
+            output = subprocess.check_output(["xprintidle"], text=True, stderr=subprocess.DEVNULL)
+            return int(output.strip()) / 1000
+        except Exception:
+            return 0.0
+
+    @staticmethod
+    def _xss_init():
+        """Try to open the XScreenSaver extension once. Return cached handles or None."""
+        try:
+            # Suppress the "MIT-SCREEN-SAVER missing" Xlib message on stderr
+            stderr_fd = os.dup(2)
+            devnull_fd = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(devnull_fd, 2)
+            try:
+                lib_x11 = ctypes.cdll.LoadLibrary("libX11.so.6")
+                lib_xss = ctypes.cdll.LoadLibrary("libXss.so.1")
+
+                class XScreenSaverInfo(ctypes.Structure):
+                    _fields_ = [
+                        ("window", ctypes.c_ulong),
+                        ("state", ctypes.c_int),
+                        ("kind", ctypes.c_int),
+                        ("since", ctypes.c_ulong),
+                        ("idle", ctypes.c_ulong),
+                        ("eventMask", ctypes.c_ulong),
+                    ]
+
+                lib_x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+                lib_x11.XOpenDisplay.restype = ctypes.c_void_p
+                lib_x11.XDefaultRootWindow.argtypes = [ctypes.c_void_p]
+                lib_x11.XDefaultRootWindow.restype = ctypes.c_ulong
+                lib_xss.XScreenSaverQueryInfo.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_ulong,
+                    ctypes.POINTER(XScreenSaverInfo),
+                ]
+                lib_xss.XScreenSaverQueryInfo.restype = ctypes.c_int
+                lib_xss.XScreenSaverAllocInfo.restype = ctypes.POINTER(XScreenSaverInfo)
+
+                display = lib_x11.XOpenDisplay(None)
+                if not display:
+                    return None
+                root = lib_x11.XDefaultRootWindow(display)
+                # Test query to make sure the extension actually works
+                info = XScreenSaverInfo()
+                if not lib_xss.XScreenSaverQueryInfo(display, root, ctypes.byref(info)):
+                    lib_x11.XCloseDisplay(display)
+                    return None
+                return (lib_x11, lib_xss, display, root, XScreenSaverInfo)
+            finally:
+                os.dup2(stderr_fd, 2)
+                os.close(stderr_fd)
+                os.close(devnull_fd)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _linux_xss_idle_seconds_cached(xss_handles) -> float:
+        lib_x11, lib_xss, display, root, XScreenSaverInfo = xss_handles
+        try:
             info = XScreenSaverInfo()
             if not lib_xss.XScreenSaverQueryInfo(display, root, ctypes.byref(info)):
                 return 0.0
             return info.idle / 1000
-        finally:
-            lib_x11.XCloseDisplay(display)
+        except Exception:
+            return 0.0
 
     @staticmethod
     def _unsupported_idle_seconds() -> float:
@@ -527,6 +634,58 @@ def make_button(text: str, callback: Callable[[], None], *, primary: bool = Fals
     button.setCursor(Qt.CursorShape.PointingHandCursor)
     button.clicked.connect(callback)
     return button
+
+
+def _linux_set_always_on_top(title: str) -> None:
+    """Best-effort always-on-top on Linux using available tools.
+
+    Tries wmctrl (EWMH), then xdotool, then gdbus (GNOME Shell).
+    Works on X11, XWayland, and native Wayland (GNOME) sessions.
+    """
+    if platform.system().lower() != "linux":
+        return
+
+    # wmctrl: standard EWMH approach — works on X11 / XWayland
+    if shutil.which("wmctrl"):
+        try:
+            subprocess.Popen(
+                ["wmctrl", "-r", title, "-b", "add,above"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            return
+        except Exception:
+            pass
+
+    # xdotool: search by title and activate — works on X11 / XWayland
+    if shutil.which("xdotool"):
+        try:
+            subprocess.Popen(
+                ["xdotool", "search", "--name", title, "set_window", "--overrideredirect", "1"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            return
+        except Exception:
+            pass
+
+    # gdbus: GNOME Shell eval — works on Wayland GNOME (if enabled)
+    if shutil.which("gdbus"):
+        try:
+            safe_title = title.replace("'", "\\'")
+            js = (
+                f"global.get_window_actors().forEach(a => {{"
+                f" let w = a.meta_window;"
+                f" if (w.title === '{safe_title}') w.make_above();"
+                f" }})"
+            )
+            subprocess.Popen(
+                ["gdbus", "call", "--session",
+                 "--dest", "org.gnome.Shell",
+                 "--object-path", "/org/gnome/Shell",
+                 "--method", "org.gnome.Shell.Eval", js],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+        except Exception:
+            pass
 
 
 def resource_path(filename: str) -> Path:
@@ -601,21 +760,44 @@ def set_native_windows_window_icon(widget: QWidget) -> None:
 
 
 class CountdownWindow(QWidget):
+    WINDOW_TITLE = "Eye Timer countdown"
+
     def __init__(self, controller: EyeTimerApp) -> None:
         super().__init__()
         self.controller = controller
         self.drag_offset: QPoint | None = None
         self.setObjectName("countdownWindow")
-        self.setWindowTitle("Eye Timer countdown")
+        self.setWindowTitle(self.WINDOW_TITLE)
         self.setWindowIcon(controller.app_icon)
-        window_kind = Qt.WindowType.Tool if controller.tray_available else Qt.WindowType.Window
+        if platform.system().lower() == "linux":
+            # On Linux (Wayland/XWayland), WindowStaysOnTopHint only works
+            # reliably for Window-type windows, not Tool.  Using Window
+            # causes a taskbar entry, but always-on-top is more important.
+            window_kind = Qt.WindowType.Window
+        else:
+            window_kind = Qt.WindowType.Tool if controller.tray_available else Qt.WindowType.Window
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
             | window_kind
         )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self._build()
         set_native_windows_window_icon(self)
+        # Periodic raise + tool call to reinforce always-on-top on Linux.
+        self._raise_timer: QTimer | None = None
+        if platform.system().lower() == "linux":
+            self._raise_timer = QTimer()
+            self._raise_timer.timeout.connect(self._periodic_raise)
+            self._raise_timer.start(3000)
+            # One-shot attempt at startup after the window is mapped.
+            QTimer.singleShot(500, self._periodic_raise)
+
+    def _periodic_raise(self) -> None:
+        """Reinforce always-on-top via raise + external tools."""
+        if self.isVisible() and not self.controller.stopping:
+            self.raise_()
+            _linux_set_always_on_top(self.WINDOW_TITLE)
 
     def _build(self) -> None:
         layout = QHBoxLayout(self)
@@ -667,6 +849,13 @@ class CountdownWindow(QWidget):
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
+            # Prefer native system move (works on Wayland and modern X11)
+            window_handle = self.windowHandle()
+            if window_handle is not None and hasattr(window_handle, "startSystemMove"):
+                window_handle.startSystemMove()
+                event.accept()
+                return
+            # Fallback: manual drag for older Qt or platforms without startSystemMove
             self.drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
             event.accept()
             return
@@ -704,11 +893,21 @@ class CountdownWindow(QWidget):
         menu.addAction(quit_action)
         menu.exec(event.globalPos())
 
+    def paintEvent(self, event: QPaintEvent) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        alpha = int(max(0.0, min(1.0, self.controller.config.countdown_alpha)) * 255)
+        painter.setBrush(QColor(24, 24, 24, alpha))
+        painter.setPen(QColor(74, 74, 74, alpha))
+        painter.drawRoundedRect(self.rect().adjusted(0, 0, -1, -1), 8, 8)
+        painter.end()
+
 
 class BreakOverlay(QWidget):
     def __init__(self, controller: EyeTimerApp, screen: QScreen, suggestion: str) -> None:
         super().__init__(None)
         self.controller = controller
+        self._target_screen = screen
         self.setObjectName("overlayWindow")
         alpha = int(max(0.0, min(1.0, controller.config.overlay_alpha)) * 255)
         self.overlay_color = QColor(16, 16, 16, alpha)
@@ -775,9 +974,11 @@ class PreparePanel(QWidget):
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.WindowDoesNotAcceptFocus
             | Qt.WindowType.Tool
         )
-        self.setWindowOpacity(controller.config.prepare_panel_alpha)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self._build(seconds_until_break)
         self._position()
 
@@ -829,6 +1030,12 @@ class PreparePanel(QWidget):
         x = geometry.right() - self.width() - margin + 1
         y = geometry.bottom() - self.height() - margin + 1
         self.move(x, y)
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        painter = QPainter(self)
+        alpha = int(max(0.0, min(1.0, self.controller.config.prepare_panel_alpha)) * 255)
+        painter.fillRect(self.rect(), QColor(24, 24, 24, alpha))
+        painter.end()
 
 
 class SettingsWindow(QWidget):
@@ -946,6 +1153,15 @@ class SettingsWindow(QWidget):
             "Prepare panel opacity",
             "Higher values make the small pre-break panel less transparent.",
             self.prepare_opacity_percent,
+            "%",
+        )
+
+        self.countdown_opacity_percent = self._make_spin_box(20, 100)
+        self._add_setting(
+            advanced_grid,
+            "Countdown widget opacity",
+            "How opaque the floating countdown timer appears. Lower values make it more transparent.",
+            self.countdown_opacity_percent,
             "%",
         )
 
@@ -1068,6 +1284,7 @@ class SettingsWindow(QWidget):
             self.idle_reset_after_minutes,
             self.overlay_opacity_percent,
             self.prepare_opacity_percent,
+            self.countdown_opacity_percent,
         )
         for box in spin_boxes:
             box.valueChanged.connect(self.update_save_button_state)
@@ -1095,6 +1312,7 @@ class SettingsWindow(QWidget):
             idle_reset_after_seconds=self.idle_reset_after_minutes.value() * 60,
             overlay_alpha=self.overlay_opacity_percent.value() / 100,
             prepare_panel_alpha=self.prepare_opacity_percent.value() / 100,
+            countdown_alpha=self.countdown_opacity_percent.value() / 100,
             start_minimized=self.start_minimized.isChecked(),
             start_with_boot=self.start_with_boot.isChecked(),
             sound_enabled=self.sound_enabled.isChecked(),
@@ -1119,6 +1337,7 @@ class SettingsWindow(QWidget):
         self.idle_reset_after_minutes.setValue(max(1, round(config.idle_reset_after_seconds / 60)))
         self.overlay_opacity_percent.setValue(round(config.overlay_alpha * 100))
         self.prepare_opacity_percent.setValue(round(config.prepare_panel_alpha * 100))
+        self.countdown_opacity_percent.setValue(round(config.countdown_alpha * 100))
         self.start_minimized.setChecked(config.start_minimized)
         self.start_with_boot.setChecked(config.start_with_boot)
         self.sound_enabled.setChecked(config.sound_enabled)
@@ -1245,6 +1464,7 @@ class EyeTimerApp:
         self.countdown_window.show()
         self.countdown_window.raise_()
         self.countdown_window.activateWindow()
+        _linux_set_always_on_top(CountdownWindow.WINDOW_TITLE)
         self.update_tray_show_action()
 
     def hide_countdown_window(self) -> None:
@@ -1272,8 +1492,11 @@ class EyeTimerApp:
         self.config = config
         self.timer.setInterval(config.tick_ms)
 
+        # Repaint countdown widget with new alpha
+        self.countdown_window.update()
+
         if self.prepare_panel is not None:
-            self.prepare_panel.setWindowOpacity(config.prepare_panel_alpha)
+            self.prepare_panel.update()
             self.prepare_panel.adjustSize()
 
         alpha = int(max(0.0, min(1.0, config.overlay_alpha)) * 255)
@@ -1371,7 +1594,17 @@ class EyeTimerApp:
         self.overlay_windows = []
         for screen in self.qt_app.screens():
             overlay = BreakOverlay(self, screen, suggestion)
-            overlay.show()
+            # Associate with the target screen before showing — critical
+            # for multi-monitor: setScreen tells Qt/Wayland which output
+            # to fullscreen on; showFullScreen uses the compositor to place
+            # the window correctly on that output.
+            window_handle = overlay.windowHandle()
+            if window_handle is None:
+                overlay.winId()                     # force native window creation
+                window_handle = overlay.windowHandle()
+            if window_handle is not None:
+                window_handle.setScreen(screen)
+            overlay.showFullScreen()
             overlay.raise_()
             self.overlay_windows.append(overlay)
 
@@ -1500,14 +1733,44 @@ class EyeTimerApp:
 
         if self.prepare_panel is not None:
             self.prepare_panel.set_countdown(seconds_until_break)
-            self.prepare_panel.show()
-            self.prepare_panel.raise_()
+            if not self.prepare_panel.isVisible():
+                self._show_prepare_panel_without_focus()
             return
 
         screen = self.qt_app.primaryScreen()
         self.prepare_panel = PreparePanel(self, screen, seconds_until_break)
+        self._show_prepare_panel_without_focus()
+
+    def _show_prepare_panel_without_focus(self) -> None:
+        """Show the prepare panel without stealing focus from the active app."""
+        if self.prepare_panel is None:
+            return
+        # Save the currently focused window ID so we can restore focus after
+        # the panel is shown.  xdotool is widely available on Ubuntu.
+        focused_wid: str | None = None
+        if platform.system().lower() == "linux" and shutil.which("xdotool"):
+            try:
+                focused_wid = subprocess.check_output(
+                    ["xdotool", "getactivewindow"],
+                    text=True, stderr=subprocess.DEVNULL, timeout=1,
+                ).strip()
+            except Exception:
+                pass
+
+        # self.prepare_panel.move(100, 100)
         self.prepare_panel.show()
-        self.prepare_panel.raise_()
+        # Position after show — the WM must have mapped the window first.
+        QTimer.singleShot(50, self.prepare_panel._position)
+
+        # Restore focus to the window that had it before.
+        if focused_wid:
+            try:
+                subprocess.Popen(
+                    ["xdotool", "windowactivate", "--sync", focused_wid],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+            except Exception:
+                pass
 
     def hide_prepare_panel(self) -> None:
         if self.prepare_panel is not None:
@@ -1565,6 +1828,10 @@ def validate_config(config: AppConfig) -> None:
         (
             0.0 <= config.prepare_panel_alpha <= 1.0,
             "prepare_panel_alpha must be between 0.0 and 1.0",
+        ),
+        (
+            0.0 <= config.countdown_alpha <= 1.0,
+            "countdown_alpha must be between 0.0 and 1.0",
         ),
         (
             config.idle_reset_after_seconds >= config.idle_pause_after_seconds,
@@ -1765,6 +2032,10 @@ def load_saved_config(default_config: AppConfig) -> AppConfig:
 
 
 def main(config_factory: Callable[[], AppConfig] = AppConfig) -> int:
+    system = platform.system().lower()
+    if system == "linux":
+        os.environ["QT_QPA_PLATFORM"] = "xcb"
+
     ensure_single_instance()
     config = load_saved_config(config_factory())
     validate_config(config)
