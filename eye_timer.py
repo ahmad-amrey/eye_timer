@@ -49,6 +49,8 @@ WINDOWS_APP_ID = "EyeTimer.App"
 REST_START_SOUND_FILE = "universfield-new-notification-017-352293.mp3"
 REST_END_SOUND_FILE = "universfield-new-notification-017-352293-pitch-changed.mp3"
 SOUND_LEAD_IN_MS = 700
+RESUME_GAP_MIN_SECONDS = 5.0
+RESUME_GAP_TICK_MULTIPLIER = 5.0
 
 
 def set_windows_app_id() -> None:
@@ -1372,6 +1374,7 @@ class EyeTimerApp:
         self.idle_detector = IdleDetector()
         self.active_seconds = 0.0
         self.last_tick = time.monotonic()
+        self.last_wall_tick = time.time()
         self.break_started_at: float | None = None
         self.suggestion_index = 0
         self.overlay_windows: list[BreakOverlay] = []
@@ -1546,8 +1549,15 @@ class EyeTimerApp:
 
     def tick(self) -> None:
         now = time.monotonic()
+        wall_now = time.time()
         elapsed = max(0.0, now - self.last_tick)
+        wall_elapsed = max(0.0, wall_now - self.last_wall_tick)
         self.last_tick = now
+        self.last_wall_tick = wall_now
+
+        if self.handle_resume_gap(elapsed, wall_elapsed, now):
+            self.update_tray_status()
+            return
 
         idle_seconds = self.idle_detector.seconds()
         if self.break_started_at is None:
@@ -1555,6 +1565,27 @@ class EyeTimerApp:
         else:
             self.update_break_overlay(now)
         self.update_tray_status()
+
+    def handle_resume_gap(self, elapsed: float, wall_elapsed: float, now: float) -> bool:
+        if not self.is_resume_gap(wall_elapsed):
+            return False
+
+        if self.break_started_at is not None:
+            missed_elapsed = max(0.0, wall_elapsed - elapsed)
+            self.break_started_at -= missed_elapsed
+            self.update_break_overlay(now)
+            return True
+
+        self.prepare_panel_dismissed = False
+        self.hide_prepare_panel()
+        if wall_elapsed >= self.config.rest_duration_seconds:
+            self.active_seconds = 0.0
+        return True
+
+    def is_resume_gap(self, wall_elapsed: float) -> bool:
+        expected_tick_seconds = max(0.001, self.config.tick_ms / 1000.0)
+        threshold = max(RESUME_GAP_MIN_SECONDS, expected_tick_seconds * RESUME_GAP_TICK_MULTIPLIER)
+        return wall_elapsed >= threshold
 
     def update_work_timer(self, elapsed: float, idle_seconds: float) -> None:
         if idle_seconds >= self.config.idle_reset_after_seconds:
@@ -1633,6 +1664,7 @@ class EyeTimerApp:
         self.active_seconds = 0.0
         self.prepare_panel_dismissed = False
         self.last_tick = time.monotonic()
+        self.last_wall_tick = time.time()
         if not skipped:
             self.play_notification_tone("end")
         self.update_tray_status()
