@@ -1,16 +1,21 @@
 settings.json
 
-# Python
+# CMake / C++ build output
+build/
+build-*/
+out/
+dist/
+CMakeUserPresets.json
+compile_commands.json
+.cache/
+.vs/
+*.user
+
+# Leftovers from the former Python version
 __pycache__/
 *.py[cod]
 *.egg-info/
-.eggs/
-pyinstaller/
 .venv/
-
-# Build output
-build/
-dist/
 *.build/
 *.dist/
 *.onefile-build/

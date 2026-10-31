@@ -18,7 +18,7 @@ if(UNIX AND NOT APPLE)
     find_package(Qt6 QUIET COMPONENTS DBus)
 endif()
 
-set(EYETIMER_ASSET_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+set(EYETIMER_ASSET_DIR "${CMAKE_CURRENT_SOURCE_DIR}/assets")
 
 # Platform services with no UI: settings, idle detection, login items, tones.
 qt_add_library(eyetimer_core STATIC
