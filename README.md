@@ -1,80 +1,143 @@
 # Eye Timer
 
-A small eye-rest reminder for Windows, macOS, and Linux.
+A small eye-rest reminder for Windows, macOS, and Linux, written in C++ with Qt 6.
+
+![Rest overlay](readme-assets/rest-overlay.png)
 
 ## Features
 
-![Eye Timer screenshot](readme-assets/Screenshot.png)
+- System tray / menu bar / status-area icon with a live progress ring.
+- Floating always-on-top countdown that you can drag anywhere. Hover it to take
+  a break now or hide it; it turns amber in the final minute.
+- Full-screen rest overlay on every screen, with a ring countdown and a healthy
+  suggestion. Skip with the `Skip break` button, `Esc`, or `Space`.
+- Pre-break notice in the corner of the screen, shown without taking focus,
+  with `Start break now` and `Hide`.
+- Idle detection: counting pauses while you are away, and a long absence counts
+  as a full rest. Sleep and resume are handled the same way.
+- Notification tones when a rest starts and when it completes.
+- Optional start at login.
+- Settings for the work interval, rest duration, pre-break notice, idle
+  behaviour, opacities, colour palette, tones, and suggestion messages.
 
-- System tray/menu bar/status-area timer.
-- Floating always-on-top countdown.
-- Full-screen rest overlay with skip support.
-- Pre-break notification panel.
-- Configurable work interval, rest duration, idle behavior, opacity, notification
-  tones, and healthy suggestion messages.
+| Countdown | Pre-break notice | Settings |
+| --- | --- | --- |
+| ![Countdown](readme-assets/countdown.png) | ![Pre-break notice](readme-assets/prepare-panel.png) | ![Settings](readme-assets/settings.png) |
 
 ## Disclaimer
 
-This project was built by AI, I haven't verified its performance or claims that it is bug free, but I have tested on Windows 11 and it works as intended!
+This project was built by AI. It has been tested on Windows 11; the macOS and
+Linux code paths compile against the same Qt APIs but have not been verified on
+those systems yet.
 
-## Install
+## Build
+
+Requirements:
+
+- CMake 3.21+ and a C++20 compiler (MSVC 2022, GCC 11+, Clang 14+)
+- Qt 6.5+ with the Widgets module
+- Optional: Qt Multimedia (tone playback through Qt) and, on Linux, Qt D-Bus
+  (idle time from GNOME/KDE). Without them the app falls back to other methods,
+  described under Notes.
 
 ```bash
-pip install -e .
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
 ```
+
+If CMake cannot find Qt, point it at your Qt install with
+`-DCMAKE_PREFIX_PATH=/path/to/Qt/6.x/<compiler>`.
+
+### Windows (MSYS2)
+
+```bash
+pacman -S mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-qt6-base mingw-w64-x86_64-qt6-multimedia
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+```
+
+To make a folder you can copy to another machine, run this from the MSYS2
+MINGW64 shell:
+
+```bash
+packaging/windows/deploy-msys2.sh build dist/EyeTimer
+```
+
+It installs the app, runs `windeployqt6`, and copies the MinGW runtime DLLs
+that `windeployqt6` leaves out. Distribute the whole `dist/EyeTimer` folder.
+With an MSVC build of Qt, `cmake --install` followed by `windeployqt` is
+enough.
+
+### macOS
+
+```bash
+brew install cmake qt
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+macdeployqt "build/Eye Timer.app"
+```
+
+The bundle sets `LSUIElement`, so the app lives in the menu bar without a Dock
+icon.
+
+### Linux
+
+```bash
+# Debian/Ubuntu
+sudo apt install cmake g++ qt6-base-dev qt6-multimedia-dev
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+sudo cmake --install build
+```
+
+Installing adds `EyeTimer` to the path, a desktop entry, and an icon.
 
 ## Run
 
-```bash
-python eye_timer.py
-```
+Start `EyeTimer` (`Eye Timer.app` on macOS). The app starts in the system
+tray / menu bar / status area. Click the icon to show or hide the floating
+countdown; right-click it (or the countdown) for the menu.
 
-The app starts in the system tray/menu bar/status area by default. Use the tray
-icon menu to show the floating countdown, open settings, start a break
-immediately, reset the timer, or quit.
+`EyeTimer --render-previews <dir>` renders every window to PNG files and exits,
+which is handy when working on the UI.
 
 ## Settings
 
-Use `Settings...` from the tray/status icon menu or right-click the floating
-countdown. Settings are saved to `settings.json` in the platform user-data
-directory for packaged builds, or next to `eye_timer.py` when running from
-source, and are applied to the running timer immediately.
+Open `Settings…` from the tray menu or the countdown's right-click menu.
+Changes apply to the running timer when you press `Save changes`.
 
-The settings window shows work interval and rest duration first. Less common
-options are under `Show advanced settings`.
+Settings are stored in `settings.json` in the per-user data folder:
 
-The settings window can adjust:
+- Windows: `%LOCALAPPDATA%\EyeTimer`
+- macOS: `~/Library/Application Support/EyeTimer`
+- Linux: `$XDG_DATA_HOME/EyeTimer` (usually `~/.local/share/EyeTimer`)
 
-- Work interval before a rest break.
-- Rest overlay duration.
-- Pre-break notice timing.
-- Idle pause and idle-as-rest timing.
-- Rest overlay and pre-break panel opacity.
-- Whether the countdown starts hidden.
-- Notification tones for rest start and completion.
-- Healthy suggestion messages.
+Files written by the earlier Python version are read as-is.
+
+## Fonts
+
+The UI is designed around [Geist](https://vercel.com/font). If it is not
+installed, the app falls back to Inter, Segoe UI, SF Pro or Noto Sans. To use
+Geist without installing it, put its `.ttf` files in a `fonts` folder next to
+the executable (or in `assets/fonts` for development builds).
 
 ## Notes
 
-- The overlay is skippable with the `Skip break` button, `Esc`, or `Space`.
-- The pre-break notification can be hidden for the current countdown window.
-- Hovering over the tray/status icon shows the remaining time. The right-click
-  tray menu also shows the remaining time at the top.
-- The floating countdown is always on top, draggable, and toggleable from the
-  tray/status icon menu.
-- The app always uses the tray/status-area integration when the OS provides it.
-  If the OS or desktop session has no tray/status area, the countdown window is
-  shown instead.
-- On macOS, Qt exposes the tray icon as a menu-bar status item. A packaged app
-  may also need `LSUIElement=true` in its `Info.plist` to hide the Dock icon.
-- On Windows, `icon.ico` is used for native taskbar/window icons and `icon.png`
-  is kept as the source image.
-- The notification tone MP3 files must be kept next to `eye_timer.py` when
-  running from source, or bundled next to the executable when packaged.
-- Multiple monitors are handled with Qt's screen APIs.
-- Qt handles the main UI layout and high-DPI behavior, so the app no longer uses
-  Tk-specific scaling and size-lock workarounds.
-- Idle detection uses OS APIs where possible. On Linux it uses `xprintidle` if
-  available, otherwise it tries XScreenSaver through `libXss`; Wayland sessions
-  may fall back to counting the user as active because many compositors restrict
-  global idle access.
+- **Tones:** played through Qt Multimedia when it is available, with a short
+  silent lead-in so slow-waking audio devices don't clip the start. Otherwise
+  Windows uses MCI, macOS uses `afplay`, and Linux tries `mpg123`, `ffplay`,
+  `gst-play-1.0`, then `paplay`.
+- **Idle detection:** Windows uses `GetLastInputInfo`, macOS uses IOKit's
+  `HIDIdleTime`. Linux tries GNOME Mutter or the freedesktop ScreenSaver
+  interface over D-Bus, then `xprintidle`, then the XScreenSaver extension.
+  Wayland sessions without any of these count the user as always active.
+- **Start at login:** a shortcut in the Startup folder on Windows, a
+  LaunchAgent on macOS, an XDG autostart entry on Linux.
+- **Linux windows:** the app runs through XWayland (`QT_QPA_PLATFORM=xcb`)
+  unless you set `QT_QPA_PLATFORM` yourself, because native Wayland does not
+  allow always-on-top windows or placing panels in a corner. If `wmctrl`,
+  `xdotool`, or GNOME Shell's D-Bus interface is available it is used to keep
+  the countdown on top.
+- If the desktop session has no tray or status area, the countdown window is
+  shown instead and closing it quits the app.
+- Only one copy runs at a time.
