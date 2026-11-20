@@ -47,7 +47,7 @@ void paintGrain(QPainter &painter, const QRect &rect, qreal opacity);
 void paintRing(QPainter &painter, const QRectF &rect, qreal progress, qreal trackWidth, qreal arcWidth,
                const QColor &track, const QList<QColor> &arcColors);
 
-enum class Icon { Eye, EyeOff, Skip, Reset, Sliders, Power, Close, Play };
+enum class Icon { Eye, EyeOff, Skip, Reset, Sliders, Power, Close, Play, Download };
 void paintIcon(QPainter &painter, Icon icon, const QRectF &rect, const QColor &color, qreal strokeWidth = 1.6);
 QIcon makeIcon(Icon icon, const QColor &color, int size = 18);
 

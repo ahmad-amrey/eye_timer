@@ -23,6 +23,7 @@ constexpr auto kCountdownAlpha = "countdown_alpha";
 constexpr auto kStartMinimized = "start_minimized";
 constexpr auto kStartWithBoot = "start_with_boot";
 constexpr auto kSoundEnabled = "sound_enabled";
+constexpr auto kCheckForUpdates = "check_for_updates";
 constexpr auto kPalette = "palette";
 constexpr auto kSuggestions = "healthy_suggestions";
 
@@ -104,6 +105,7 @@ AppConfig loadSavedConfig(const AppConfig &defaults)
     readBool(data, kStartMinimized, config.startMinimized);
     readBool(data, kStartWithBoot, config.startWithBoot);
     readBool(data, kSoundEnabled, config.soundEnabled);
+    readBool(data, kCheckForUpdates, config.checkForUpdates);
 
     const QJsonValue palette = data.value(QLatin1String(kPalette));
     if (palette.isString())
@@ -146,6 +148,7 @@ bool saveConfig(const AppConfig &config, QString *savedPath, QString *error)
     data.insert(QLatin1String(kStartMinimized), config.startMinimized);
     data.insert(QLatin1String(kStartWithBoot), config.startWithBoot);
     data.insert(QLatin1String(kSoundEnabled), config.soundEnabled);
+    data.insert(QLatin1String(kCheckForUpdates), config.checkForUpdates);
     data.insert(QLatin1String(kPalette), config.palette);
     data.insert(QLatin1String(kSuggestions), QJsonArray::fromStringList(config.healthySuggestions));
 

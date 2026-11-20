@@ -290,6 +290,12 @@ void paintIcon(QPainter &painter, Icon icon, const QRectF &rect, const QColor &c
         painter.drawLine(QPointF(6, 6), QPointF(18, 18));
         painter.drawLine(QPointF(18, 6), QPointF(6, 18));
         break;
+    case Icon::Download:
+        painter.drawLine(QPointF(12, 4), QPointF(12, 15));
+        painter.drawLine(QPointF(7, 10.5), QPointF(12, 15.5));
+        painter.drawLine(QPointF(17, 10.5), QPointF(12, 15.5));
+        painter.drawLine(QPointF(5, 20), QPointF(19, 20));
+        break;
     }
     painter.restore();
 }

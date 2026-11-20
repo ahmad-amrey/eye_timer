@@ -6,6 +6,7 @@
 #include "Platform.h"
 #include "PreparePanel.h"
 #include "SettingsWindow.h"
+#include "UpdateDialog.h"
 #include "Widgets.h"
 
 #include <QAction>
@@ -16,11 +17,17 @@
 #include <QMenu>
 #include <QPainter>
 #include <QScreen>
+#include <QSettings>
 #include <QSystemTrayIcon>
 #include <QWidgetAction>
 #include <QWindow>
 
+#include <utility>
+
 namespace {
+constexpr int kFirstUpdateCheckDelayMs = 20 * 1000;
+constexpr int kUpdateCheckPollMs = 6 * 60 * 60 * 1000;
+constexpr qint64 kUpdateCheckIntervalSecs = 24 * 60 * 60;
 constexpr double kResumeGapMinSeconds = 5.0;
 constexpr double kResumeGapTickMultiplier = 5.0;
 constexpr auto kRestStartTone = "universfield-new-notification-017-352293.mp3";
@@ -40,6 +47,14 @@ QString formatNextBreak(int seconds)
     if (minutes > 0)
         return QStringLiteral("Next break in %1m %2s").arg(minutes).arg(remainder);
     return QStringLiteral("Next break in %1s").arg(remainder);
+}
+
+// Update-check bookkeeping that is not a user setting.
+QSettings *stateStore()
+{
+    static QSettings settings(QDir(platform::appDataDirectory()).filePath(QStringLiteral("state.ini")),
+                              QSettings::IniFormat);
+    return &settings;
 }
 
 QIcon loadAppIcon()
@@ -91,6 +106,15 @@ EyeTimerApp::EyeTimerApp(QApplication *app, const AppConfig &config, Options opt
         applyStartupVisibility();
         connect(&m_timer, &QTimer::timeout, this, &EyeTimerApp::tick);
         m_timer.start(m_config.tickMs);
+    }
+
+    m_updates = new UpdateChecker(QCoreApplication::applicationVersion(), this);
+    connect(m_updates, &UpdateChecker::finished, this, &EyeTimerApp::handleUpdateResult);
+    if (options.checkForUpdates) {
+        // Check shortly after start, then keep looking in case the app runs for days.
+        QTimer::singleShot(kFirstUpdateCheckDelayMs, this, &EyeTimerApp::maybeCheckForUpdates);
+        connect(&m_updateTimer, &QTimer::timeout, this, &EyeTimerApp::maybeCheckForUpdates);
+        m_updateTimer.start(kUpdateCheckPollMs);
     }
 }
 
@@ -484,6 +508,79 @@ void EyeTimerApp::stop()
     m_app->quit();
 }
 
+// ---------------------------------------------------------------- updates
+
+void EyeTimerApp::maybeCheckForUpdates()
+{
+    if (!m_config.checkForUpdates || qEnvironmentVariableIsSet("EYETIMER_NO_UPDATE_CHECK") || m_updates->isChecking())
+        return;
+    const QDateTime last = stateStore()->value(QStringLiteral("updates/lastCheck")).toDateTime();
+    const QDateTime now = QDateTime::currentDateTimeUtc();
+    // A clock that went backwards also makes a check due.
+    if (last.isValid() && last <= now && last.secsTo(now) < kUpdateCheckIntervalSecs)
+        return;
+    m_manualUpdateCheck = false;
+    m_updates->check();
+    updateMenus();
+}
+
+void EyeTimerApp::checkForUpdatesNow()
+{
+    m_manualUpdateCheck = true;
+    m_updates->check();
+    updateMenus();
+}
+
+void EyeTimerApp::handleUpdateResult(UpdateChecker::Result result, const ReleaseInfo &release, const QString &error)
+{
+    stateStore()->setValue(QStringLiteral("updates/lastCheck"), QDateTime::currentDateTimeUtc());
+
+    if (result == UpdateChecker::Result::UpdateAvailable)
+        m_availableUpdate = release;
+    else if (result == UpdateChecker::Result::UpToDate)
+        m_availableUpdate.reset();
+    updateMenus();
+
+    const bool manual = std::exchange(m_manualUpdateCheck, false);
+    if (manual) {
+        presentUpdateResult(result, release, error);
+        return;
+    }
+    if (result != UpdateChecker::Result::UpdateAvailable
+        || stateStore()->value(QStringLiteral("updates/skipVersion")).toString() == release.version)
+        return;
+
+    if (m_tray && QSystemTrayIcon::supportsMessages()) {
+        m_tray->showMessage(QStringLiteral("Eye Timer %1 is available").arg(release.version),
+                            QStringLiteral("You have %1. Click to see what\u2019s new.")
+                                .arg(QCoreApplication::applicationVersion()),
+                            m_appIcon, 15000);
+    } else {
+        presentUpdateResult(result, release, error);
+    }
+}
+
+void EyeTimerApp::showUpdateDialog()
+{
+    if (m_availableUpdate)
+        presentUpdateResult(UpdateChecker::Result::UpdateAvailable, *m_availableUpdate, {});
+}
+
+void EyeTimerApp::presentUpdateResult(UpdateChecker::Result result, const ReleaseInfo &release, const QString &error)
+{
+    if (m_updateDialog)
+        m_updateDialog->close();
+    auto *dialog = new UpdateDialog(result, release, QCoreApplication::applicationVersion(), error);
+    dialog->setWindowIcon(m_appIcon);
+    connect(dialog, &UpdateDialog::skipVersionRequested, this, [](const QString &version) {
+        stateStore()->setValue(QStringLiteral("updates/skipVersion"), version);
+    });
+    m_updateDialog = dialog;
+    dialog->show();
+    dialog->raise();
+    dialog->activateWindow();
+}
+
 // ------------------------------------------------------------ tray & menus
 
 QMenu *EyeTimerApp::createActionsMenu(QWidget *parent)
@@ -516,6 +613,14 @@ QMenu *EyeTimerApp::createActionsMenu(QWidget *parent)
     connect(reset, &QAction::triggered, this, &EyeTimerApp::resetWorkTimer);
     QAction *settings = menu->addAction(theme::makeIcon(theme::Icon::Sliders, iconColor), QStringLiteral("Settings…"));
     connect(settings, &QAction::triggered, this, &EyeTimerApp::showSettingsWindow);
+    QAction *updates = menu->addAction(theme::makeIcon(theme::Icon::Download, iconColor), QString());
+    connect(updates, &QAction::triggered, this, [this] {
+        if (m_availableUpdate)
+            showUpdateDialog();
+        else
+            checkForUpdatesNow();
+    });
+    m_updateActions << updates;
     menu->addSeparator();
     QAction *quit = menu->addAction(theme::makeIcon(theme::Icon::Power, iconColor), QStringLiteral("Quit Eye Timer"));
     connect(quit, &QAction::triggered, this, &EyeTimerApp::stop);
@@ -534,6 +639,7 @@ void EyeTimerApp::setupTrayIcon()
     m_tray = new QSystemTrayIcon(this);
     m_trayMenu = createActionsMenu(nullptr);
     m_tray->setContextMenu(m_trayMenu);
+    connect(m_tray, &QSystemTrayIcon::messageClicked, this, &EyeTimerApp::showUpdateDialog);
     connect(m_tray, &QSystemTrayIcon::activated, this, [this](QSystemTrayIcon::ActivationReason reason) {
         if (reason == QSystemTrayIcon::Trigger || reason == QSystemTrayIcon::DoubleClick
             || reason == QSystemTrayIcon::MiddleClick)
@@ -576,6 +682,18 @@ void EyeTimerApp::updateMenus()
         action->setText(visible ? QStringLiteral("Hide countdown") : QStringLiteral("Show countdown"));
         action->setIcon(theme::makeIcon(visible ? theme::Icon::EyeOff : theme::Icon::Eye, theme::text(0.7)));
     }
+    for (const QPointer<QAction> &action : std::as_const(m_updateActions)) {
+        if (!action)
+            continue;
+        if (m_updates && m_updates->isChecking())
+            action->setText(QStringLiteral("Checking for updates\u2026"));
+        else if (m_availableUpdate)
+            action->setText(QStringLiteral("Eye Timer %1 is available\u2026").arg(m_availableUpdate->version));
+        else
+            action->setText(QStringLiteral("Check for updates\u2026"));
+        action->setEnabled(!(m_updates && m_updates->isChecking()));
+    }
+    m_updateActions.removeAll(nullptr);
     m_trayHeaders.removeAll(nullptr);
     m_statusActions.removeAll(nullptr);
     m_toggleActions.removeAll(nullptr);
@@ -654,6 +772,16 @@ bool EyeTimerApp::renderPreviews(const QString &directory)
         settings.selectTab(i);
         ok &= settings.grab().save(dir.filePath(QStringLiteral("settings-%1.png").arg(i + 1)));
     }
+
+    ReleaseInfo sample;
+    sample.version = QStringLiteral("0.11.0");
+    sample.tag = QStringLiteral("v0.11.0");
+    sample.notes = QStringLiteral("Smoother tones on every platform and a quieter tray icon.\n\n"
+                                  "### Fixed\n- Tones no longer stutter while the overlay animates.");
+    UpdateDialog updateDialog(UpdateChecker::Result::UpdateAvailable, sample, QCoreApplication::applicationVersion(), {});
+    updateDialog.setAttribute(Qt::WA_DeleteOnClose, false);
+    updateDialog.adjustSize();
+    ok &= updateDialog.grab().save(dir.filePath(QStringLiteral("update-dialog.png")));
 
     const QIcon tray = renderTrayIcon(0.35, palette().lines[0]);
     ok &= tray.pixmap(64, 64).save(dir.filePath(QStringLiteral("tray-icon.png")));

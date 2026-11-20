@@ -16,6 +16,7 @@ struct AppConfig {
     bool startMinimized = false;
     bool startWithBoot = false;
     bool soundEnabled = true;
+    bool checkForUpdates = true;
     QString palette = QStringLiteral("aurora");
     QStringList healthySuggestions = {
         QStringLiteral("Look at something at least 6 meters away."),

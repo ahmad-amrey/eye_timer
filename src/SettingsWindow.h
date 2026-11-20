@@ -72,6 +72,7 @@ private:
     ToggleSwitch *m_startWithBoot = nullptr;
     ToggleSwitch *m_startHidden = nullptr;
     ToggleSwitch *m_tones = nullptr;
+    ToggleSwitch *m_updates = nullptr;
 
     QVBoxLayout *m_messagesLayout = nullptr;
     QList<QLineEdit *> m_messageEdits;

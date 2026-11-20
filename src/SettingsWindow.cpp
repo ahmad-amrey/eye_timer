@@ -386,6 +386,8 @@ QWidget *SettingsWindow::buildSystemPage()
     m_startWithBoot = new ToggleSwitch;
     m_startHidden = new ToggleSwitch;
     m_tones = new ToggleSwitch;
+    m_updates = new ToggleSwitch;
+    m_updates->setAccessibleName(QStringLiteral("Check for updates automatically"));
     const QString moment = platform::startupMomentName();
     m_startWithBoot->setAccessibleName(QStringLiteral("Start with %1").arg(moment));
     m_startHidden->setAccessibleName(QStringLiteral("Start hidden in tray"));
@@ -398,6 +400,10 @@ QWidget *SettingsWindow::buildSystemPage()
                               m_startHidden));
     layout->addWidget(makeRow(QStringLiteral("Notification tones"),
                               QStringLiteral("A short tone when a rest starts and another when it completes."), m_tones));
+    layout->addWidget(makeRow(QStringLiteral("Check for updates automatically"),
+                              QStringLiteral("Once a day, ask GitHub whether a newer version is out. Nothing is "
+                                             "downloaded or installed without you."),
+                              m_updates));
 
     auto *previewRow = new QHBoxLayout;
     previewRow->setContentsMargins(0, 18, 0, 0);
@@ -415,7 +421,7 @@ QWidget *SettingsWindow::buildSystemPage()
 
     connect(startTone, &QPushButton::clicked, this, [this] { m_app->previewTone(QStringLiteral("start")); });
     connect(endTone, &QPushButton::clicked, this, [this] { m_app->previewTone(QStringLiteral("end")); });
-    for (ToggleSwitch *toggle : {m_startWithBoot, m_startHidden, m_tones})
+    for (ToggleSwitch *toggle : {m_startWithBoot, m_startHidden, m_tones, m_updates})
         connect(toggle, &ToggleSwitch::toggled, this, &SettingsWindow::formChanged);
     return page;
 }
@@ -536,6 +542,7 @@ AppConfig SettingsWindow::currentFormConfig() const
     config.startWithBoot = m_startWithBoot->isChecked();
     config.startMinimized = m_startHidden->isChecked();
     config.soundEnabled = m_tones->isChecked();
+    config.checkForUpdates = m_updates->isChecked();
     if (auto *button = qobject_cast<PaletteButton *>(m_paletteGroup->checkedButton()))
         config.palette = button->paletteId();
     config.healthySuggestions = currentMessages();
@@ -558,6 +565,7 @@ void SettingsWindow::loadFromConfig()
     m_startWithBoot->setChecked(config.startWithBoot);
     m_startHidden->setChecked(config.startMinimized);
     m_tones->setChecked(config.soundEnabled);
+    m_updates->setChecked(config.checkForUpdates);
     for (QAbstractButton *button : m_paletteGroup->buttons()) {
         auto *paletteButton = static_cast<PaletteButton *>(button);
         paletteButton->setChecked(paletteButton->paletteId() == m_app->palette().id);

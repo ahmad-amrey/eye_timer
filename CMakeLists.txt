@@ -8,7 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(EYETIMER_WITH_MULTIMEDIA "Play tones through Qt Multimedia when it is installed" ON)
 
-find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Widgets)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Widgets Network)
 qt_standard_project_setup()
 
 if(EYETIMER_WITH_MULTIMEDIA)
@@ -32,9 +32,13 @@ qt_add_library(eyetimer_core STATIC
     src/Platform.h
     src/SoundPlayer.cpp
     src/SoundPlayer.h
+    src/UpdateChecker.cpp
+    src/UpdateChecker.h
+    src/Version.cpp
+    src/Version.h
 )
 target_include_directories(eyetimer_core PUBLIC src)
-target_link_libraries(eyetimer_core PUBLIC Qt6::Core Qt6::Gui Qt6::Widgets)
+target_link_libraries(eyetimer_core PUBLIC Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network)
 target_compile_definitions(eyetimer_core PRIVATE EYETIMER_ASSET_DIR="${EYETIMER_ASSET_DIR}")
 
 if(TARGET Qt6::Multimedia)
@@ -75,6 +79,8 @@ set(EYETIMER_UI_SOURCES
     src/SettingsWindow.h
     src/Theme.cpp
     src/Theme.h
+    src/UpdateDialog.cpp
+    src/UpdateDialog.h
     src/Widgets.cpp
     src/Widgets.h
 )

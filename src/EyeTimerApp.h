@@ -4,6 +4,7 @@
 #include "IdleDetector.h"
 #include "SoundPlayer.h"
 #include "Theme.h"
+#include "UpdateChecker.h"
 
 #include <QDate>
 #include <QElapsedTimer>
@@ -20,6 +21,7 @@ class CountdownWindow;
 class PreparePanel;
 class QAction;
 class QApplication;
+class QDialog;
 class QMenu;
 class QSystemTrayIcon;
 class SettingsWindow;
@@ -35,6 +37,7 @@ public:
     struct Options {
         bool createTrayIcon = true;
         bool startTimer = true;
+        bool checkForUpdates = true;
     };
 
     EyeTimerApp(QApplication *app, const AppConfig &config, Options options);
@@ -75,6 +78,8 @@ public slots:
     void showCountdownWindow();
     void hideCountdownWindow();
     void dismissPreparePanel();
+    void checkForUpdatesNow();
+    void showUpdateDialog();
     void stop();
 
 private:
@@ -87,6 +92,10 @@ private:
     void hidePreparePanel();
     void closeOverlays();
     void playTone(const QString &event);
+
+    void maybeCheckForUpdates();
+    void handleUpdateResult(UpdateChecker::Result result, const ReleaseInfo &release, const QString &error);
+    void presentUpdateResult(UpdateChecker::Result result, const ReleaseInfo &release, const QString &error);
 
     void setupTrayIcon();
     void applyStartupVisibility();
@@ -124,5 +133,12 @@ private:
     QList<QPointer<TrayHeader>> m_trayHeaders;
     QList<QPointer<QAction>> m_statusActions;
     QList<QPointer<QAction>> m_toggleActions;
+    QList<QPointer<QAction>> m_updateActions;
+
+    UpdateChecker *m_updates = nullptr;
+    QTimer m_updateTimer;
+    bool m_manualUpdateCheck = false;
+    std::optional<ReleaseInfo> m_availableUpdate;
+    QPointer<QDialog> m_updateDialog;
     QString m_trayIconKey;
 };

@@ -67,7 +67,8 @@ int main(int argc, char *argv[])
     app.setStyleSheet(theme::applicationStyleSheet());
 
     const AppConfig config = loadSavedConfig();
-    EyeTimerApp controller(&app, config, {.createTrayIcon = !previewMode, .startTimer = !previewMode});
+    EyeTimerApp controller(&app, config,
+                           {.createTrayIcon = !previewMode, .startTimer = !previewMode, .checkForUpdates = !previewMode});
     QApplication::setWindowIcon(controller.appIcon());
 
     if (previewMode)
