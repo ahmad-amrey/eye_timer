@@ -1,6 +1,7 @@
 #include "PreparePanel.h"
 
 #include "EyeTimerApp.h"
+#include "Platform.h"
 #include "Theme.h"
 #include "Widgets.h"
 
@@ -29,6 +30,7 @@ PreparePanel::PreparePanel(EyeTimerApp *app, QScreen *screen)
     setWindowFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::WindowDoesNotAcceptFocus | Qt::Tool);
     setAttribute(Qt::WA_ShowWithoutActivating);
     setAttribute(Qt::WA_TranslucentBackground);
+    platform::keepFloatingEverywhere(this);
 
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(22, 18, 18, 22);

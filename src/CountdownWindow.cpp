@@ -45,6 +45,7 @@ CountdownWindow::CountdownWindow(EyeTimerApp *app)
     setWindowFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | kind);
     setAttribute(Qt::WA_TranslucentBackground);
     setMouseTracking(true);
+    platform::keepFloatingEverywhere(this);
 
     connect(m_breakButton, &IconButton::clicked, app, &EyeTimerApp::startBreak);
     connect(m_hideButton, &IconButton::clicked, app, &EyeTimerApp::hideCountdownWindow);
