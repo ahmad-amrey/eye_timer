@@ -104,16 +104,24 @@ jobs:
           New-Item -ItemType Directory -Force (Split-Path $settings) | Out-Null
           Set-Content $settings '{"rest_interval_seconds": 1500}'
 
+          $startup = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\Eye Timer.lnk"
+
           Start-Process $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -Wait
           if (-not (Test-Path "$app\EyeTimer.exe")) { throw "not installed per user in $app" }
+          # A first install turns on start at sign-in for the installed copy.
+          if (-not (Test-Path $startup)) { throw "no startup shortcut after a first install" }
+          $target = (New-Object -ComObject WScript.Shell).CreateShortcut($startup).TargetPath
+          if ($target -ne "$app\EyeTimer.exe") { throw "startup shortcut points at $target" }
+          if ((Get-Content $settings -Raw | ConvertFrom-Json).start_with_boot -ne $true) { throw "start_with_boot not saved" }
           Start-Process $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -Wait
           if (-not (Test-Path "$app\EyeTimer.exe")) { throw "update removed the app" }
 
           Start-Process "$app\unins000.exe" -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -Wait
           for ($i = 0; $i -lt 30 -and (Test-Path "$app\EyeTimer.exe"); $i++) { Start-Sleep 1 }
           if (Test-Path "$app\EyeTimer.exe") { throw "uninstall left the app behind" }
+          if (Test-Path $startup) { throw "uninstall left the startup shortcut behind" }
           if ((Get-Content $settings -Raw) -notmatch '1500') { throw "settings were changed or removed" }
-          Write-Host "Per-user install, update and uninstall OK; settings kept."
+          Write-Host "Per-user install, start at sign-in, update and uninstall OK; settings kept."
       - uses: actions/upload-artifact@v4
         with:
           name: windows

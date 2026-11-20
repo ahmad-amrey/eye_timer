@@ -5,6 +5,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QSaveFile>
+#include <QTextStream>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -60,6 +61,48 @@ QString startupShortcutPath()
         appData = QDir::homePath() + QStringLiteral("/AppData/Roaming");
     return QDir(appData).filePath(
         QStringLiteral("Microsoft/Windows/Start Menu/Programs/Startup/Eye Timer.lnk"));
+}
+
+bool samePath(const QString &left, const QString &right)
+{
+    return QDir::cleanPath(QDir::fromNativeSeparators(left)).compare(QDir::cleanPath(QDir::fromNativeSeparators(right)),
+                                                                    Qt::CaseInsensitive)
+           == 0;
+}
+
+// Task Manager's Startup tab keeps its on/off switch per shortcut name under
+// StartupApproved. Removing the value means "enabled" again.
+void clearStartupApproval()
+{
+    const std::wstring name = QFileInfo(startupShortcutPath()).fileName().toStdWString();
+    RegDeleteKeyValueW(HKEY_CURRENT_USER,
+                       L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\StartupFolder",
+                       name.c_str());
+}
+
+QString shortcutTarget(const QString &shortcutPath)
+{
+    if (!QFileInfo::exists(shortcutPath))
+        return {};
+    const HRESULT init = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    QString target;
+    IShellLinkW *link = nullptr;
+    if (SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_IShellLinkW,
+                                   reinterpret_cast<void **>(&link)))) {
+        IPersistFile *file = nullptr;
+        if (SUCCEEDED(link->QueryInterface(IID_IPersistFile, reinterpret_cast<void **>(&file)))) {
+            const std::wstring path = QDir::toNativeSeparators(shortcutPath).toStdWString();
+            wchar_t buffer[MAX_PATH] = {};
+            if (SUCCEEDED(file->Load(path.c_str(), STGM_READ))
+                && SUCCEEDED(link->GetPath(buffer, MAX_PATH, nullptr, SLGP_RAWPATH)))
+                target = QString::fromWCharArray(buffer);
+            file->Release();
+        }
+        link->Release();
+    }
+    if (SUCCEEDED(init))
+        CoUninitialize();
+    return target;
 }
 
 bool createShortcut(const QString &shortcutPath, const QString &target, QString *error)
@@ -153,13 +196,17 @@ QString desktopExecArg(const QString &value)
 
 } // namespace
 
-bool setEnabled(bool enabled, QString *error)
+bool setEnabled(bool enabled, QString *error, const QString &executable)
 {
+    const QString target = executable.isEmpty() ? executablePath() : executable;
 #if defined(Q_OS_WIN)
     const QString shortcut = startupShortcutPath();
+    // Turning it on or off here is an explicit choice, so it also replaces
+    // whatever was set for this entry in Task Manager.
+    clearStartupApproval();
     if (!enabled)
         return removeFile(shortcut, error);
-    return createShortcut(shortcut, executablePath(), error);
+    return createShortcut(shortcut, target, error);
 #elif defined(Q_OS_MACOS)
     const QString path = launchAgentPath();
     if (!enabled)
@@ -174,7 +221,7 @@ bool setEnabled(bool enabled, QString *error)
                               "  <key>RunAtLoad</key>\n  <true/>\n"
                               "  <key>KeepAlive</key>\n  <false/>\n"
                               "</dict>\n</plist>\n")
-                              .arg(xmlEscape(executablePath()));
+                              .arg(xmlEscape(target));
     return writeTextFile(path, plist.toUtf8(), error);
 #else
     const QString path = desktopEntryPath();
@@ -187,9 +234,40 @@ bool setEnabled(bool enabled, QString *error)
                               "Exec=%1\n"
                               "Hidden=false\n"
                               "X-GNOME-Autostart-enabled=true\n")
-                              .arg(desktopExecArg(executablePath()));
+                              .arg(desktopExecArg(target));
     return writeTextFile(path, entry.toUtf8(), error);
 #endif
+}
+
+bool isRegistered()
+{
+#if defined(Q_OS_WIN)
+    const QString target = shortcutTarget(startupShortcutPath());
+    return !target.isEmpty() && samePath(target, executablePath());
+#elif defined(Q_OS_MACOS)
+    QFile file(launchAgentPath());
+    if (!file.open(QIODevice::ReadOnly))
+        return false;
+    const QString needle = QStringLiteral("<string>%1</string>").arg(xmlEscape(executablePath()));
+    return QString::fromUtf8(file.readAll()).contains(needle);
+#else
+    QFile file(desktopEntryPath());
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
+        return false;
+    const QString exec = QStringLiteral("Exec=") + desktopExecArg(executablePath());
+    QTextStream stream(&file);
+    while (!stream.atEnd()) {
+        if (stream.readLine().trimmed() == exec)
+            return true;
+    }
+    return false;
+#endif
+}
+
+void sync(bool wanted)
+{
+    if (wanted && !isRegistered())
+        setEnabled(true, nullptr);
 }
 
 } // namespace autostart

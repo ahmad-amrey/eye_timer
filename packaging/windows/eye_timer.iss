@@ -57,6 +57,9 @@ RestartApplications=no
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
+; Offered on the first install only; afterwards the app's own setting
+; (Settings > System) decides, and updates leave it alone.
+Name: "startup"; Description: "Start {#AppName} when I sign in"; GroupDescription: "Startup:"; Check: not IsUpgrade
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [InstallDelete]
@@ -72,6 +75,8 @@ Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
 
 [Run]
+; Turns on the app's "Start with Windows" setting and writes its login item.
+Filename: "{app}\{#AppExe}"; Parameters: "--start-with-boot on"; StatusMsg: "Setting up start at sign-in..."; Flags: runhidden waituntilterminated; Tasks: startup
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
@@ -80,6 +85,16 @@ Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags
 Type: files; Name: "{userstartup}\{#AppName}.lnk"
 
 [Code]
+const
+  UninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{6F0B2C8E-4E1D-4C55-9C9B-2E7A6B1D9E31}_is1';
+  StartupApprovedKey = 'Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder';
+
+// An earlier version is installed, so this run is an update.
+function IsUpgrade(): Boolean;
+begin
+  Result := RegKeyExists(HKCU, UninstallKey);
+end;
+
 // The app lives in the tray with no visible window, so Windows' Restart
 // Manager can't always ask it to close. End it before files are replaced.
 procedure StopRunningApp();
@@ -99,4 +114,11 @@ function InitializeUninstall(): Boolean;
 begin
   StopRunningApp();
   Result := True;
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  // Forget Task Manager's on/off switch for the removed startup shortcut.
+  if CurUninstallStep = usPostUninstall then
+    RegDeleteValue(HKCU, StartupApprovedKey, '{#AppName}.lnk');
 end;

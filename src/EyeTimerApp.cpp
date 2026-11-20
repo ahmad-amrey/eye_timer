@@ -103,6 +103,8 @@ EyeTimerApp::EyeTimerApp(QApplication *app, const AppConfig &config, Options opt
     if (m_trayAvailable)
         setupTrayIcon();
     if (options.startTimer) {
+        // After an install, update or move, point the login item at this copy.
+        autostart::sync(m_config.startWithBoot);
         applyStartupVisibility();
         connect(&m_timer, &QTimer::timeout, this, &EyeTimerApp::tick);
         m_timer.start(m_config.tickMs);

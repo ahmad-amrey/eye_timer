@@ -1,3 +1,4 @@
+#include "Autostart.h"
 #include "Config.h"
 #include "EyeTimerApp.h"
 #include "Platform.h"
@@ -41,6 +42,11 @@ int main(int argc, char *argv[])
                                         QStringLiteral("Play the \"start\" or \"end\" tone and exit."),
                                         QStringLiteral("tone"));
     parser.addOption(toneOption);
+    const QCommandLineOption startWithBootOption(
+        QStringLiteral("start-with-boot"),
+        QStringLiteral("Turn \"Start with Windows/login\" on or off in the settings, register it, and exit."),
+        QStringLiteral("on|off"));
+    parser.addOption(startWithBootOption);
     parser.process(app);
     const bool previewMode = parser.isSet(previewOption);
 
@@ -49,6 +55,16 @@ int main(int argc, char *argv[])
         player.play(EyeTimerApp::tonePath(parser.value(toneOption)));
         QTimer::singleShot(4000, &app, &QApplication::quit);
         return app.exec();
+    }
+
+    if (parser.isSet(startWithBootOption)) {
+        // Used by the Windows installer's "Start Eye Timer when I sign in".
+        AppConfig config = loadSavedConfig();
+        config.startWithBoot = parser.value(startWithBootOption).compare(QStringLiteral("off"), Qt::CaseInsensitive) != 0;
+        QString error;
+        if (!saveConfig(config, nullptr, &error) || !autostart::setEnabled(config.startWithBoot, &error))
+            return 1;
+        return 0;
     }
 
     // One running copy per user. QLockFile cleans up after crashes.

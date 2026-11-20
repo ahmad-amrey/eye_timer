@@ -7,6 +7,7 @@ endfunction()
 eyetimer_add_test(tst_version)
 eyetimer_add_test(tst_config)
 eyetimer_add_test(tst_updatechecker)
+eyetimer_add_test(tst_autostart)
 
 if(WIN32)
     # Decodes the embedded tones exactly as the app does before playing them.
