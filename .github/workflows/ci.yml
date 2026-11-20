@@ -342,7 +342,12 @@ jobs:
 
   release:
     name: Release
-    if: github.ref_type == 'tag'
+    # Explicit status checks: a plain condition implicitly requires every
+    # upstream job to have succeeded, and the platform jobs behind Tested are
+    # skipped when an earlier build is reused.
+    if: >-
+      !cancelled() && github.ref_type == 'tag'
+      && needs.version.result == 'success' && needs.tested.result == 'success'
     needs: [version, tested]
     runs-on: ubuntu-latest
     permissions:
