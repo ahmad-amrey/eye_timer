@@ -8,7 +8,7 @@ To release, add a `## [X.Y.Z] - YYYY-MM-DD` section, set the same version in
 `project(EyeTimer VERSION X.Y.Z)` in `CMakeLists.txt`, and push a `vX.Y.Z` tag
 on `main`. The section becomes the release notes.
 
-## [0.10.1] - 2026-11-20
+## [0.10.1] - 2026-11-21
 
 Fixes for update checks and starting with Windows after installing.
 
