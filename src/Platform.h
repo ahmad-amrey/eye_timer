@@ -2,6 +2,8 @@
 
 #include <QString>
 
+class QWidget;
+
 namespace platform {
 
 inline constexpr auto kAppUserModelId = "EyeTimer.App";
@@ -19,6 +21,12 @@ void setWindowsAppUserModelId();
 
 // "Windows" on Windows, "login" elsewhere; used in the startup setting label.
 QString startupMomentName();
+
+// For frameless always-on-top windows. macOS: stays visible when the app
+// loses focus, follows the user to every desktop (Space) and shows over
+// full-screen apps. Call after the window flags and attributes are set, as it
+// creates the native window. No-op elsewhere.
+void keepFloatingEverywhere(QWidget *widget);
 
 // Linux window managers often ignore WindowStaysOnTopHint for frameless
 // windows. Best effort through wmctrl, xdotool or GNOME Shell.

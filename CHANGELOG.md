@@ -12,7 +12,8 @@ on `main`. The section becomes the release notes.
 
 ### Fixed
 - macOS: the countdown pill, the "Break soon" panel and the rest overlay no
-  longer disappear as soon as you click into another app.
+  longer disappear as soon as you click into another app. They also follow
+  you to every desktop (Space) and show over full-screen apps.
 
 ## [0.10.1] - 2026-11-21
 

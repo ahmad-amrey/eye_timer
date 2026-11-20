@@ -81,6 +81,13 @@ QString startupMomentName()
 #endif
 }
 
+#ifndef Q_OS_MACOS
+void keepFloatingEverywhere(QWidget *widget)
+{
+    Q_UNUSED(widget);
+}
+#endif
+
 void reinforceAlwaysOnTop(const QString &windowTitle)
 {
 #if defined(Q_OS_LINUX)

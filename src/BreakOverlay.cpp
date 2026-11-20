@@ -1,6 +1,7 @@
 #include "BreakOverlay.h"
 
 #include "EyeTimerApp.h"
+#include "Platform.h"
 #include "Theme.h"
 #include "Widgets.h"
 
@@ -44,10 +45,9 @@ BreakOverlay::BreakOverlay(EyeTimerApp *app, QScreen *screen, const QString &sug
 {
     setWindowTitle(QStringLiteral("Eye Timer break"));
     setWindowFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::Tool);
-    // macOS hides Qt::Tool windows whenever the app loses focus; keep it up.
-    setAttribute(Qt::WA_MacAlwaysShowToolWindow);
     setAttribute(Qt::WA_TranslucentBackground);
     setFocusPolicy(Qt::StrongFocus);
+    platform::keepFloatingEverywhere(this);
     setGeometry(screen->geometry());
 
     connect(m_skip, &KeyHintButton::clicked, app, &EyeTimerApp::skipBreak);
