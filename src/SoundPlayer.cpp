@@ -18,6 +18,7 @@
 #include <QAudioDecoder>
 #include <QAudioSink>
 #include <QBuffer>
+#include <QThread>
 #include <QUrl>
 #endif
 
@@ -162,11 +163,23 @@ QByteArray SoundPlayer::decodeToWav(const QString &filePath)
 SoundPlayer::SoundPlayer(QObject *parent)
     : QObject(parent)
 {
+#if defined(EYETIMER_QT_AUDIO)
+    m_audioThread = new QThread(this);
+    m_audioThread->setObjectName(QStringLiteral("EyeTimerAudio"));
+    m_audioContext = new QObject;
+    m_audioContext->moveToThread(m_audioThread);
+    m_audioThread->start(QThread::HighPriority);
+#endif
 }
 
 SoundPlayer::~SoundPlayer()
 {
     stopAll();
+#if defined(EYETIMER_QT_AUDIO)
+    m_audioThread->quit();
+    m_audioThread->wait();
+    delete m_audioContext; // the thread has finished, so this is safe here
+#endif
 }
 
 void SoundPlayer::play(const QString &filePath)
@@ -226,13 +239,20 @@ void SoundPlayer::stopAll()
         delete decode;
     }
     m_decodes.clear();
-    for (const Playback &playback : std::as_const(m_playbacks)) {
-        playback.sink->disconnect(this);
-        playback.sink->stop();
-        playback.sink->deleteLater();
-        playback.buffer->deleteLater();
-    }
-    m_playbacks.clear();
+
+    QObject *context = m_audioContext;
+    QMetaObject::invokeMethod(
+        context,
+        [context] {
+            const QList<QAudioSink *> sinks = context->findChildren<QAudioSink *>(Qt::FindDirectChildrenOnly);
+            for (QAudioSink *sink : sinks) {
+                sink->disconnect();
+                sink->stop();
+                delete sink;
+            }
+            qDeleteAll(context->findChildren<QBuffer *>(Qt::FindDirectChildrenOnly));
+        },
+        Qt::BlockingQueuedConnection);
 #endif
 }
 
@@ -262,37 +282,28 @@ void SoundPlayer::startPlayback(const QAudioFormat &format, const QByteArray &pc
     const qint32 silenceBytes = format.bytesForFrames(frames);
     const char silenceValue = format.sampleFormat() == QAudioFormat::UInt8 ? char(0x80) : char(0);
 
-    auto *buffer = new QBuffer(this);
-    buffer->setData(QByteArray(silenceBytes, silenceValue) + pcm);
-    buffer->open(QIODevice::ReadOnly);
+    const QByteArray data = QByteArray(silenceBytes, silenceValue) + pcm;
 
-    auto *sink = new QAudioSink(format, this);
-    sink->setVolume(kVolume);
-    // A generous buffer keeps playback smooth while the UI thread is busy
-    // painting the full-screen overlay.
-    sink->setBufferSize(format.bytesForDuration(400'000));
-    m_playbacks.append({sink, buffer});
+    // Create the sink on the audio thread so its refills never wait on the UI.
+    QObject *context = m_audioContext;
+    QMetaObject::invokeMethod(context, [context, format, data] {
+        auto *buffer = new QBuffer(context);
+        buffer->setData(data);
+        buffer->open(QIODevice::ReadOnly);
 
-    connect(sink, &QAudioSink::stateChanged, this, [this, sink](QAudio::State state) {
-        if (state == QAudio::IdleState)
-            sink->stop();
-        else if (state == QAudio::StoppedState)
-            releasePlayback(sink);
+        auto *sink = new QAudioSink(format, context);
+        sink->setVolume(kVolume);
+        sink->setBufferSize(format.bytesForDuration(250'000));
+        QObject::connect(sink, &QAudioSink::stateChanged, context, [sink, buffer](QAudio::State state) {
+            if (state == QAudio::IdleState) {
+                sink->stop();
+            } else if (state == QAudio::StoppedState) {
+                sink->deleteLater();
+                buffer->deleteLater();
+            }
+        });
+        sink->start(buffer);
     });
-    sink->start(buffer);
-}
-
-void SoundPlayer::releasePlayback(QAudioSink *sink)
-{
-    for (qsizetype i = 0; i < m_playbacks.size(); ++i) {
-        if (m_playbacks.at(i).sink != sink)
-            continue;
-        const Playback playback = m_playbacks.takeAt(i);
-        playback.sink->disconnect(this);
-        playback.sink->deleteLater();
-        playback.buffer->deleteLater();
-        return;
-    }
 }
 
 #elif !defined(Q_OS_WIN)

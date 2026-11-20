@@ -10,8 +10,7 @@
 #include <QList>
 
 class QAudioDecoder;
-class QAudioSink;
-class QBuffer;
+class QThread;
 #endif
 
 // Plays the short notification tones.
@@ -22,7 +21,7 @@ class QBuffer;
 //            memory with PlaySound, which streams on the system's own audio
 //            thread. (MCI/DirectShow playback stuttered.)
 //   macOS/Linux with Qt Multimedia: decoded with QAudioDecoder, played with
-//            QAudioSink.
+//            a QAudioSink on its own thread.
 //   Otherwise: afplay on macOS, mpg123/ffplay/gst-play/paplay on Linux.
 class SoundPlayer : public QObject
 {
@@ -50,17 +49,15 @@ private:
         QAudioFormat format;
         QByteArray pcm;
     };
-    struct Playback {
-        QAudioSink *sink = nullptr;
-        QBuffer *buffer = nullptr;
-    };
-
     void finishDecode(Decode *decode);
     void startPlayback(const QAudioFormat &format, const QByteArray &pcm);
-    void releasePlayback(QAudioSink *sink);
 
     QList<Decode *> m_decodes;
-    QList<Playback> m_playbacks;
+    // Sinks and their buffers live on a dedicated thread: Qt's audio backends
+    // refill from the thread that owns the sink, so on the UI thread any
+    // stall (painting, process calls) left gaps in the sound.
+    QThread *m_audioThread = nullptr;
+    QObject *m_audioContext = nullptr;
 #else
     void playWithPlatformPlayer(const QString &filePath);
 #endif
