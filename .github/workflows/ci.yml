@@ -1,6 +1,9 @@
 # Builds and tests Eye Timer on every pull request and push to main, and
 # publishes a GitHub release with installers when a vX.Y.Z tag is pushed.
 #
+# Actions are pinned to exact commits; update the SHA and the version comment
+# together.
+#
 # Each successful build is recorded under the git tree hash of the code it
 # built (a "tested-<tree>" artifact). When a later run sees exactly the same
 # code, typically the push of a merged pull request that was up to date with
@@ -44,7 +47,7 @@ jobs:
       tree: ${{ steps.reuse.outputs.tree }}
       reuse-run: ${{ steps.reuse.outputs.run }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Read and check the version
         id: version
         run: |
@@ -79,21 +82,39 @@ jobs:
             echo "Rebuild requested."
             exit 0
           fi
-          # Only builds from this repository's own branches, never from a fork's
-          # pull request, whose workflow could have produced anything.
-          run=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=tested-$tree&per_page=20" --jq '
-            [.artifacts[] | select(.expired | not)
-                          | select(.workflow_run.head_repository_id == .workflow_run.repository_id)]
-            | .[0].workflow_run.id // empty')
+          # A build is reused only from a run that checked out exactly this
+          # tree. ci.yml is part of the tree, so the installers were made by
+          # the same reviewed workflow that is running now, never by a branch
+          # or fork whose own workflow could have produced anything.
+          run=""
+          candidates=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=tested-$tree&per_page=20" \
+            --jq '.artifacts[] | select(.expired | not) | .workflow_run.id' | sort -u)
+          for id in $candidates; do
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id" \
+              --jq '[.conclusion, .path, .head_repository.full_name, .head_sha] | @tsv' > run.tsv
+            IFS=$'\t' read -r conclusion path head_repo head_sha < run.tsv
+            if [ "$conclusion" != success ] || [ "$path" != .github/workflows/ci.yml ] \
+               || [ "$head_repo" != "$GITHUB_REPOSITORY" ]; then
+              echo "Run $id: not a successful run of this workflow in this repository; ignored."
+              continue
+            fi
+            head_tree=$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$head_sha" --jq .tree.sha)
+            if [ "$head_tree" != "$tree" ]; then
+              echo "Run $id built commit $head_sha with different code; ignored."
+              continue
+            fi
+            installers=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/artifacts?per_page=50" --jq '
+              [.artifacts[] | select(.expired | not) | .name
+                            | select(. == "windows" or . == "linux" or . == "macos")] | length')
+            if [ "$installers" != 3 ]; then
+              echo "Run $id built this code, but its installers have expired; ignored."
+              continue
+            fi
+            run=$id
+            break
+          done
           if [ -z "$run" ]; then
-            echo "No earlier build of this code; building it."
-            exit 0
-          fi
-          installers=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/artifacts?per_page=50" --jq '
-            [.artifacts[] | select(.expired | not) | .name
-                          | select(. == "windows" or . == "linux" or . == "macos")] | length')
-          if [ "$installers" != 3 ]; then
-            echo "Run $run built this code, but its installers have expired; building again."
+            echo "No earlier build of exactly this code; building it."
             exit 0
           fi
           echo "run=$run" >> "$GITHUB_OUTPUT"
@@ -108,8 +129,8 @@ jobs:
       run:
         shell: msys2 {0}
     steps:
-      - uses: actions/checkout@v4
-      - uses: msys2/setup-msys2@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0
         with:
           msystem: MINGW64
           update: true
@@ -172,7 +193,7 @@ jobs:
           if (Test-Path $startup) { throw "uninstall left the startup shortcut behind" }
           if ((Get-Content $settings -Raw) -notmatch '1500') { throw "settings were changed or removed" }
           Write-Host "Per-user install, start at sign-in, update and uninstall OK; settings kept."
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: windows
           path: installer/EyeTimer-windows-x64-setup.exe
@@ -186,7 +207,7 @@ jobs:
     env:
       QT_QPA_PLATFORM: offscreen
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Install build dependencies
         run: |
           sudo apt-get update
@@ -224,7 +245,7 @@ jobs:
           ! command -v EyeTimer
           grep -q 1500 "$settings" || { echo "::error::settings were changed or removed"; exit 1; }
           echo "Install, upgrade and removal OK; settings kept."
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: linux
           path: dist/EyeTimer-linux-amd64.deb
@@ -238,8 +259,8 @@ jobs:
     env:
       QT_QPA_PLATFORM: offscreen
     steps:
-      - uses: actions/checkout@v4
-      - uses: jurplel/install-qt-action@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: jurplel/install-qt-action@b344308e4483fc892e0d27b3cd1b173ebdd95f06 # v4.5.0
         with:
           version: ${{ env.QT_VERSION }}
           host: mac
@@ -274,7 +295,7 @@ jobs:
           test -f previews/rest-overlay.png
       - name: Build the disk image
         run: packaging/macos/make-dmg.sh "build/Eye Timer.app" dist/EyeTimer-macos.dmg
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: macos
           path: dist/EyeTimer-macos.dmg
@@ -313,7 +334,7 @@ jobs:
         if: needs.version.outputs.reuse-run == ''
         run: echo "${{ github.run_id }}" > tested.txt
       - if: needs.version.outputs.reuse-run == ''
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: tested-${{ needs.version.outputs.tree }}
           path: tested.txt
@@ -331,7 +352,7 @@ jobs:
       VERSION: ${{ needs.version.outputs.version }}
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
       - name: Check the tag is on main
@@ -341,7 +362,7 @@ jobs:
             exit 1
           fi
       - name: Download the installers (from this run or the earlier build)
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: dist
           pattern: "{windows,linux,macos}"
