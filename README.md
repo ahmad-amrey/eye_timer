@@ -93,10 +93,10 @@ If CMake cannot find Qt, point it at your Qt install with
 
 ### Windows (MSYS2)
 
-From the MSYS2 MINGW64 shell:
+From the MSYS2 UCRT64 shell:
 
 ```bash
-pacman -S mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-qt6-base mingw-w64-x86_64-qt6-tools
+pacman -S mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-qt6-base mingw-w64-ucrt-x86_64-qt6-tools
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 packaging/windows/deploy-msys2.sh build dist/EyeTimer

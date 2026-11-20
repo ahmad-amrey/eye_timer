@@ -47,7 +47,7 @@ jobs:
       tree: ${{ steps.reuse.outputs.tree }}
       reuse-run: ${{ steps.reuse.outputs.run }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Read and check the version
         id: version
         run: |
@@ -129,17 +129,17 @@ jobs:
       run:
         shell: msys2 {0}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0
         with:
-          msystem: MINGW64
+          msystem: UCRT64
           update: true
           install: >-
-            mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-cmake
-            mingw-w64-x86_64-ninja
-            mingw-w64-x86_64-qt6-base
-            mingw-w64-x86_64-qt6-tools
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-qt6-base
+            mingw-w64-ucrt-x86_64-qt6-tools
       - name: Configure
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
       - name: Build
@@ -150,7 +150,7 @@ jobs:
         run: grep -E "error|Error|FAILED|undefined reference" build.log | head -10 | sed 's/^/::error::/' || true
       - name: Test
         run: ctest --test-dir build --output-on-failure
-      - name: Bundle Qt and the MinGW runtime
+      - name: Bundle Qt and the MinGW (UCRT) runtime
         run: packaging/windows/deploy-msys2.sh build dist/EyeTimer
       - name: Smoke-test the bundle without MSYS2 on PATH
         shell: pwsh
@@ -193,7 +193,7 @@ jobs:
           if (Test-Path $startup) { throw "uninstall left the startup shortcut behind" }
           if ((Get-Content $settings -Raw) -notmatch '1500') { throw "settings were changed or removed" }
           Write-Host "Per-user install, start at sign-in, update and uninstall OK; settings kept."
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows
           path: installer/EyeTimer-windows-x64-setup.exe
@@ -207,7 +207,7 @@ jobs:
     env:
       QT_QPA_PLATFORM: offscreen
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install build dependencies
         run: |
           sudo apt-get update
@@ -245,7 +245,7 @@ jobs:
           ! command -v EyeTimer
           grep -q 1500 "$settings" || { echo "::error::settings were changed or removed"; exit 1; }
           echo "Install, upgrade and removal OK; settings kept."
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: linux
           path: dist/EyeTimer-linux-amd64.deb
@@ -259,7 +259,7 @@ jobs:
     env:
       QT_QPA_PLATFORM: offscreen
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: jurplel/install-qt-action@b344308e4483fc892e0d27b3cd1b173ebdd95f06 # v4.5.0
         with:
           version: ${{ env.QT_VERSION }}
@@ -295,7 +295,7 @@ jobs:
           test -f previews/rest-overlay.png
       - name: Build the disk image
         run: packaging/macos/make-dmg.sh "build/Eye Timer.app" dist/EyeTimer-macos.dmg
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: macos
           path: dist/EyeTimer-macos.dmg
@@ -334,7 +334,7 @@ jobs:
         if: needs.version.outputs.reuse-run == ''
         run: echo "${{ github.run_id }}" > tested.txt
       - if: needs.version.outputs.reuse-run == ''
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: tested-${{ needs.version.outputs.tree }}
           path: tested.txt
@@ -352,7 +352,7 @@ jobs:
       VERSION: ${{ needs.version.outputs.version }}
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: Check the tag is on main
@@ -362,7 +362,7 @@ jobs:
             exit 1
           fi
       - name: Download the installers (from this run or the earlier build)
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: dist
           pattern: "{windows,linux,macos}"

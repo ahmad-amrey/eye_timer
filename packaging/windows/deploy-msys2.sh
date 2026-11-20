@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Builds a self-contained Eye Timer folder from an MSYS2 (MinGW-w64) build.
+# Builds a self-contained Eye Timer folder from an MSYS2 (MinGW-w64) build,
+# made in the UCRT64 environment (or the older MINGW64 one).
 #
 # windeployqt copies Qt's own DLLs and plugins but not the MinGW runtime and
 # third-party libraries Qt links against (libstdc++, ICU, zlib, ...), so those
 # are collected with ldd.
 #
-# Usage, from an MSYS2 MINGW64 shell in the repository root:
+# Usage, from an MSYS2 UCRT64 shell in the repository root:
 #   packaging/windows/deploy-msys2.sh [build-dir] [output-dir]
 set -euo pipefail
 
