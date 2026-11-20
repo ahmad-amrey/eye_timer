@@ -781,6 +781,8 @@ bool EyeTimerApp::renderPreviews(const QString &directory)
     ReleaseInfo sample;
     sample.version = QStringLiteral("0.11.0");
     sample.tag = QStringLiteral("v0.11.0");
+    if (const QString asset = UpdateChecker::installerAssetName(); !asset.isEmpty())
+        sample.downloadUrl = UpdateChecker::assetDownloadUrl(sample.tag, asset);
     sample.notes = QStringLiteral("Smoother tones on every platform and a quieter tray icon.\n\n"
                                   "### Fixed\n- Tones no longer stutter while the overlay animates.");
     UpdateDialog updateDialog(UpdateChecker::Result::UpdateAvailable, sample, QCoreApplication::applicationVersion(), {});

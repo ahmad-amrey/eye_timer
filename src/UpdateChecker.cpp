@@ -3,6 +3,9 @@
 #include "Version.h"
 
 #include <QDateTime>
+#include <QFile>
+#include <QJsonArray>
+#include <QSysInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkAccessManager>
@@ -34,6 +37,26 @@ QString rateLimitMessage(const QNetworkReply *reply)
                        .arg(QDateTime::fromSecsSinceEpoch(reset).toLocalTime().toString(QStringLiteral("HH:mm")));
     }
     return message;
+}
+
+// Whether this Linux system installs .deb packages, from /etc/os-release.
+bool isDebianFamily()
+{
+    QFile file(QStringLiteral("/etc/os-release"));
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
+        return false;
+    QStringList families;
+    const QStringList lines = QString::fromUtf8(file.readAll()).split(QLatin1Char('\n'));
+    for (QString line : lines) {
+        line = line.trimmed();
+        if (line.startsWith(QLatin1String("ID=")) || line.startsWith(QLatin1String("ID_LIKE="))) {
+            QString value = line.section(QLatin1Char('='), 1);
+            value.remove(QLatin1Char('"'));
+            value.remove(QLatin1Char('\''));
+            families << value.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+        }
+    }
+    return families.contains(QLatin1String("debian")) || families.contains(QLatin1String("ubuntu"));
 }
 
 } // namespace
@@ -137,6 +160,10 @@ void UpdateChecker::handlePageReply()
     release.tag = tag;
     release.version = versionFromTag(tag);
     release.pageUrl = target.toString();
+    // Release files keep the same names in every release.
+    const QString asset = installerAssetName();
+    if (!asset.isEmpty())
+        release.downloadUrl = assetDownloadUrl(tag, asset);
     finishWith(release);
 }
 
@@ -156,6 +183,34 @@ QUrl UpdateChecker::safeReleasePageUrl(const QString &url)
                          && candidate.userInfo().isEmpty()
                          && candidate.path().startsWith(QLatin1String("/ahmad-amrey/eye_timer/releases/"));
     return trusted ? candidate : QUrl(QString::fromLatin1(kReleasesPageUrl));
+}
+
+QString UpdateChecker::installerAssetName()
+{
+#if defined(Q_OS_WIN)
+    return installerAssetName(QStringLiteral("windows"), QSysInfo::currentCpuArchitecture(), false);
+#elif defined(Q_OS_MACOS)
+    return installerAssetName(QStringLiteral("macos"), QSysInfo::currentCpuArchitecture(), false);
+#else
+    return installerAssetName(QStringLiteral("linux"), QSysInfo::currentCpuArchitecture(), isDebianFamily());
+#endif
+}
+
+QString UpdateChecker::installerAssetName(const QString &os, const QString &cpuArchitecture, bool debianFamily)
+{
+    if (os == QLatin1String("windows"))
+        return QStringLiteral("EyeTimer-windows-x64-setup.exe"); // also runs on Arm through emulation
+    if (os == QLatin1String("macos"))
+        return QStringLiteral("EyeTimer-macos.dmg"); // universal: Apple silicon and Intel
+    if (os == QLatin1String("linux") && debianFamily && cpuArchitecture == QLatin1String("x86_64"))
+        return QStringLiteral("EyeTimer-linux-amd64.deb");
+    return {};
+}
+
+QString UpdateChecker::assetDownloadUrl(const QString &tag, const QString &asset)
+{
+    return QStringLiteral("https://github.com/ahmad-amrey/eye_timer/releases/download/%1/%2")
+        .arg(QString::fromLatin1(QUrl::toPercentEncoding(tag)), QString::fromLatin1(QUrl::toPercentEncoding(asset)));
 }
 
 QString UpdateChecker::tagFromReleasePageUrl(const QUrl &url)
@@ -187,6 +242,13 @@ std::optional<ReleaseInfo> UpdateChecker::parseRelease(const QByteArray &json, Q
     release.name = object.value(QLatin1String("name")).toString();
     release.pageUrl = object.value(QLatin1String("html_url")).toString();
     release.notes = object.value(QLatin1String("body")).toString();
+    const QString installer = installerAssetName();
+    const QJsonArray assets = object.value(QLatin1String("assets")).toArray();
+    for (const QJsonValue &asset : assets) {
+        const QJsonObject file = asset.toObject();
+        if (!installer.isEmpty() && file.value(QLatin1String("name")).toString() == installer)
+            release.downloadUrl = file.value(QLatin1String("browser_download_url")).toString();
+    }
     if (release.version.isEmpty()) {
         if (error)
             *error = QStringLiteral("The release has no version tag");

@@ -79,6 +79,21 @@ UpdateDialog::UpdateDialog(UpdateChecker::Result result, const ReleaseInfo &rele
             layout->addWidget(makeLabel(summary, theme::font(15, QFont::Light), theme::text(0.86), this));
         }
 
+        // Download fetches this platform's installer directly; say what to do with it.
+        const bool hasInstaller = !release.downloadUrl.isEmpty();
+        if (hasInstaller) {
+#if defined(Q_OS_WIN)
+            const QString howTo = QStringLiteral("Download saves the installer. Run it to update; your settings stay.");
+#elif defined(Q_OS_MACOS)
+            const QString howTo =
+                QStringLiteral("Download saves the disk image. Open it and replace the app; your settings stay.");
+#else
+            const QString howTo = QStringLiteral("Download saves the package. Open it to update; your settings stay.");
+#endif
+            layout->addSpacing(2);
+            layout->addWidget(makeLabel(howTo, theme::font(13, QFont::Light), theme::text(0.62), this));
+        }
+
         m_notes = new QTextBrowser(this);
         m_notes->setOpenExternalLinks(true);
         m_notes->setMarkdown(release.notes.isEmpty() ? QStringLiteral("_No release notes._") : release.notes);
@@ -92,10 +107,12 @@ UpdateDialog::UpdateDialog(UpdateChecker::Result result, const ReleaseInfo &rele
 
         auto *skip = makeButton(QStringLiteral("Skip this version"), "secondaryButton", this);
         m_notesToggle = makeButton(QStringLiteral("What’s new"), "secondaryButton", this);
-        auto *download = makeButton(QStringLiteral("Download"), "primaryButton", this);
+        // No installer for this system (e.g. a non-Debian Linux): send people to
+        // the release page instead, where they can pick or build.
+        auto *download = makeButton(hasInstaller ? QStringLiteral("Download") : QStringLiteral("Open release page"),
+                                    "primaryButton", this);
         download->setDefault(true);
-        // Notes are missing when only the release page answered; Download
-        // still opens the release, which shows them.
+        // Notes are missing when only the release page answered.
         m_notesToggle->setVisible(!release.notes.isEmpty());
         buttons->addWidget(skip);
         buttons->addStretch(1);
@@ -103,7 +120,7 @@ UpdateDialog::UpdateDialog(UpdateChecker::Result result, const ReleaseInfo &rele
         buttons->addWidget(download);
 
         const QString version = release.version;
-        const QString pageUrl = release.pageUrl;
+        const QString target = hasInstaller ? release.downloadUrl : release.pageUrl;
         connect(skip, &QPushButton::clicked, this, [this, version] {
             emit skipVersionRequested(version);
             accept();
@@ -113,9 +130,10 @@ UpdateDialog::UpdateDialog(UpdateChecker::Result result, const ReleaseInfo &rele
             m_notesToggle->setText(m_notes->isVisible() ? QStringLiteral("Hide notes") : QStringLiteral("What’s new"));
             adjustSize();
         });
-        connect(download, &QPushButton::clicked, this, [this, pageUrl] {
-            // Only ever this repository's release pages, whatever the response said.
-            QDesktopServices::openUrl(UpdateChecker::safeReleasePageUrl(pageUrl));
+        connect(download, &QPushButton::clicked, this, [this, target] {
+            // Only ever this repository's releases, whatever the response said.
+            // The browser downloads the installer straight away.
+            QDesktopServices::openUrl(UpdateChecker::safeReleasePageUrl(target));
             accept();
         });
     } else {

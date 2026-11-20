@@ -1,6 +1,7 @@
 #include "UpdateChecker.h"
 
 #include <QFile>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSignalSpy>
@@ -98,6 +99,43 @@ private slots:
         QVERIFY(release->notes.contains(QStringLiteral("Smoother tones")));
     }
 
+    void installerAssetName_data()
+    {
+        QTest::addColumn<QString>("os");
+        QTest::addColumn<QString>("cpu");
+        QTest::addColumn<bool>("debian");
+        QTest::addColumn<QString>("asset");
+        QTest::newRow("windows x64") << "windows" << "x86_64" << false << "EyeTimer-windows-x64-setup.exe";
+        QTest::newRow("windows arm (emulation)") << "windows" << "arm64" << false << "EyeTimer-windows-x64-setup.exe";
+        QTest::newRow("macos apple silicon") << "macos" << "arm64" << false << "EyeTimer-macos.dmg";
+        QTest::newRow("macos intel") << "macos" << "x86_64" << false << "EyeTimer-macos.dmg";
+        QTest::newRow("ubuntu x64") << "linux" << "x86_64" << true << "EyeTimer-linux-amd64.deb";
+        QTest::newRow("fedora x64") << "linux" << "x86_64" << false << "";
+        QTest::newRow("debian arm") << "linux" << "arm64" << true << "";
+    }
+
+    void installerAssetName()
+    {
+        QFETCH(QString, os);
+        QFETCH(QString, cpu);
+        QFETCH(bool, debian);
+        QFETCH(QString, asset);
+        QCOMPARE(UpdateChecker::installerAssetName(os, cpu, debian), asset);
+    }
+
+    void picksThisPlatformsInstaller()
+    {
+        const auto release = UpdateChecker::parseRelease(releaseJson("v0.11.0"), nullptr);
+        QVERIFY(release.has_value());
+        const QString asset = UpdateChecker::installerAssetName();
+        if (asset.isEmpty()) {
+            QVERIFY(release->downloadUrl.isEmpty());
+        } else {
+            QCOMPARE(release->downloadUrl, UpdateChecker::assetDownloadUrl("v0.11.0", asset));
+            QCOMPARE(UpdateChecker::safeReleasePageUrl(release->downloadUrl), QUrl(release->downloadUrl));
+        }
+    }
+
     void ignoresDraftsAndPrereleases()
     {
         QVERIFY(!UpdateChecker::parseRelease(releaseJson("v0.11.0", true, false), nullptr));
@@ -187,6 +225,8 @@ private slots:
         QTest::addColumn<bool>("kept");
         QTest::newRow("release tag page") << "https://github.com/ahmad-amrey/eye_timer/releases/tag/v0.11.0" << true;
         QTest::newRow("latest page") << "https://github.com/ahmad-amrey/eye_timer/releases/latest" << true;
+        QTest::newRow("installer download")
+            << "https://github.com/ahmad-amrey/eye_timer/releases/download/v0.11.0/EyeTimer-macos.dmg" << true;
         QTest::newRow("other repository") << "https://github.com/someone/eye_timer/releases/tag/v9" << false;
         QTest::newRow("look-alike host") << "https://github.com.evil.example/ahmad-amrey/eye_timer/releases/" << false;
         QTest::newRow("user info trick") << "https://github.com@evil.example/ahmad-amrey/eye_timer/releases/" << false;
@@ -220,6 +260,9 @@ private slots:
         QCOMPARE(release.version, QStringLiteral("0.11.0"));
         QCOMPARE(release.pageUrl, QStringLiteral("https://github.com/ahmad-amrey/eye_timer/releases/tag/v0.11.0"));
         QVERIFY(release.notes.isEmpty());
+        // Without the API, the installer link is built from the tag.
+        const QString asset = UpdateChecker::installerAssetName();
+        QCOMPARE(release.downloadUrl, asset.isEmpty() ? QString() : UpdateChecker::assetDownloadUrl("v0.11.0", asset));
     }
 
     void rateLimitedEverywhereSaysSo()
@@ -260,6 +303,17 @@ private:
         object.insert(QStringLiteral("prerelease"), prerelease);
         object.insert(QStringLiteral("html_url"), QStringLiteral("https://github.com/ahmad-amrey/eye_timer/releases/tag/") + name);
         object.insert(QStringLiteral("body"), QStringLiteral("Smoother tones on every platform.\n\n### Fixed\n- Stutter"));
+        QJsonArray assets;
+        for (const char *file : {"EyeTimer-windows-x64-setup.exe", "EyeTimer-macos.dmg", "EyeTimer-linux-amd64.deb",
+                                 "SHA256SUMS.txt"}) {
+            QJsonObject asset;
+            asset.insert(QStringLiteral("name"), QString::fromLatin1(file));
+            asset.insert(QStringLiteral("browser_download_url"),
+                         QStringLiteral("https://github.com/ahmad-amrey/eye_timer/releases/download/%1/%2")
+                             .arg(name, QString::fromLatin1(file)));
+            assets.append(asset);
+        }
+        object.insert(QStringLiteral("assets"), assets);
         return QJsonDocument(object).toJson();
     }
 

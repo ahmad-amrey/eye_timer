@@ -107,7 +107,7 @@ packaging/windows/deploy-msys2.sh build dist/EyeTimer
 [Inno Setup 6](https://jrsoftware.org/isinfo.php) and run:
 
 ```bash
-iscc /DAppVersion=0.10.2 /DSourceDir=dist\EyeTimer /DOutputDir=dist packaging\windows\eye_timer.iss
+iscc /DAppVersion=0.10.3 /DSourceDir=dist\EyeTimer /DOutputDir=dist packaging\windows\eye_timer.iss
 ```
 
 ### macOS
