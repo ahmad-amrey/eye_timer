@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Eye Timer
+GenericName=Eye-rest reminder
+Comment=Reminds you to rest your eyes with the 20-20-20 rule
+Exec=EyeTimer
+Icon=eye-timer
+Terminal=false
+Categories=Utility;Accessibility;
+StartupNotify=false
