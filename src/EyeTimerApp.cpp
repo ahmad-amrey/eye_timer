@@ -377,7 +377,7 @@ void EyeTimerApp::dismissPreparePanel()
 
 // ------------------------------------------------------------------ sound
 
-QString EyeTimerApp::tonePath(const QString &event) const
+QString EyeTimerApp::tonePath(const QString &event)
 {
     return platform::resourcePath(QString::fromLatin1(event == QStringLiteral("start") ? kRestStartTone : kRestEndTone));
 }

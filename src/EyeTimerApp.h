@@ -60,6 +60,7 @@ public:
 
     bool applySettings(const AppConfig &config, QString *savedPath, QString *error);
     void previewTone(const QString &event);
+    static QString tonePath(const QString &event); // "start" or "end"
 
     // Renders every window to PNG files in `directory` (used to review the UI).
     bool renderPreviews(const QString &directory);
@@ -86,7 +87,6 @@ private:
     void hidePreparePanel();
     void closeOverlays();
     void playTone(const QString &event);
-    QString tonePath(const QString &event) const;
 
     void setupTrayIcon();
     void applyStartupVisibility();

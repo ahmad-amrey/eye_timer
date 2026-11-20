@@ -1,6 +1,7 @@
 #include "Config.h"
 #include "EyeTimerApp.h"
 #include "Platform.h"
+#include "SoundPlayer.h"
 #include "Theme.h"
 
 #include <QApplication>
@@ -8,6 +9,7 @@
 #include <QDir>
 #include <QLockFile>
 #include <QMessageBox>
+#include <QTimer>
 
 int main(int argc, char *argv[])
 {
@@ -35,8 +37,19 @@ int main(int argc, char *argv[])
                                            QStringLiteral("Render every window to PNG files in <dir> and exit."),
                                            QStringLiteral("dir"));
     parser.addOption(previewOption);
+    const QCommandLineOption toneOption(QStringLiteral("play-tone"),
+                                        QStringLiteral("Play the \"start\" or \"end\" tone and exit."),
+                                        QStringLiteral("tone"));
+    parser.addOption(toneOption);
     parser.process(app);
     const bool previewMode = parser.isSet(previewOption);
+
+    if (parser.isSet(toneOption)) {
+        SoundPlayer player;
+        player.play(EyeTimerApp::tonePath(parser.value(toneOption)));
+        QTimer::singleShot(4000, &app, &QApplication::quit);
+        return app.exec();
+    }
 
     // One running copy per user. QLockFile cleans up after crashes.
     QLockFile lock(QDir::temp().filePath(QStringLiteral("eye_timer.lock")));

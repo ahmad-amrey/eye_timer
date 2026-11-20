@@ -35,7 +35,7 @@ those systems yet.
 Requirements:
 
 - CMake 3.21+ and a C++20 compiler (MSVC 2022, GCC 11+, Clang 14+)
-- Qt 6.5+ with the Widgets module
+- Qt 6.4+ with the Widgets module
 - Optional: Qt Multimedia (tone playback through Qt) and, on Linux, Qt D-Bus
   (idle time from GNOME/KDE). Without them the app falls back to other methods,
   described under Notes.

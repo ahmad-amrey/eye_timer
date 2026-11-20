@@ -13,6 +13,22 @@
 
 namespace platform {
 
+#if defined(Q_OS_LINUX)
+namespace {
+// Fire-and-forget helper whose output is discarded, so a missing service
+// (e.g. no GNOME Shell) does not print an error every few seconds.
+void startQuietly(const QString &program, const QStringList &arguments)
+{
+    QProcess process;
+    process.setProgram(program);
+    process.setArguments(arguments);
+    process.setStandardOutputFile(QProcess::nullDevice());
+    process.setStandardErrorFile(QProcess::nullDevice());
+    process.startDetached();
+}
+} // namespace
+#endif
+
 QString resourcePath(const QString &fileName)
 {
     const QString appDir = QCoreApplication::applicationDirPath();
@@ -69,12 +85,12 @@ void reinforceAlwaysOnTop(const QString &windowTitle)
 {
 #if defined(Q_OS_LINUX)
     if (!QStandardPaths::findExecutable(QStringLiteral("wmctrl")).isEmpty()) {
-        QProcess::startDetached(QStringLiteral("wmctrl"),
+        startQuietly(QStringLiteral("wmctrl"),
                                 {QStringLiteral("-r"), windowTitle, QStringLiteral("-b"), QStringLiteral("add,above")});
         return;
     }
     if (!QStandardPaths::findExecutable(QStringLiteral("xdotool")).isEmpty()) {
-        QProcess::startDetached(QStringLiteral("xdotool"),
+        startQuietly(QStringLiteral("xdotool"),
                                 {QStringLiteral("search"), QStringLiteral("--name"), windowTitle,
                                  QStringLiteral("set_window"), QStringLiteral("--overrideredirect"), QStringLiteral("1")});
         return;
@@ -86,7 +102,7 @@ void reinforceAlwaysOnTop(const QString &windowTitle)
                                    "global.get_window_actors().forEach(a => { let w = a.meta_window;"
                                    " if (w.title === '%1') w.make_above(); })")
                                    .arg(safeTitle);
-        QProcess::startDetached(QStringLiteral("gdbus"),
+        startQuietly(QStringLiteral("gdbus"),
                                 {QStringLiteral("call"), QStringLiteral("--session"),
                                  QStringLiteral("--dest"), QStringLiteral("org.gnome.Shell"),
                                  QStringLiteral("--object-path"), QStringLiteral("/org/gnome/Shell"),
@@ -117,8 +133,7 @@ void restoreActiveWindow(const QString &windowId)
 #if defined(Q_OS_LINUX)
     if (windowId.isEmpty())
         return;
-    QProcess::startDetached(QStringLiteral("xdotool"),
-                            {QStringLiteral("windowactivate"), QStringLiteral("--sync"), windowId});
+    startQuietly(QStringLiteral("xdotool"), {QStringLiteral("windowactivate"), QStringLiteral("--sync"), windowId});
 #else
     Q_UNUSED(windowId);
 #endif

@@ -8,7 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(EYETIMER_WITH_MULTIMEDIA "Play tones through Qt Multimedia when it is installed" ON)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Widgets)
 qt_standard_project_setup()
 
 if(EYETIMER_WITH_MULTIMEDIA)
