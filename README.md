@@ -4,6 +4,32 @@ A small eye-rest reminder for Windows, macOS, and Linux, written in C++ with Qt 
 
 ![Rest overlay](readme-assets/rest-overlay.png)
 
+## Download
+
+Get the latest version from the
+[releases page](https://github.com/ahmad-amrey/eye_timer/releases/latest):
+
+| Platform | Download | Install |
+| --- | --- | --- |
+| Windows 10/11 (x64) | [EyeTimer-windows-x64-setup.exe](https://github.com/ahmad-amrey/eye_timer/releases/latest/download/EyeTimer-windows-x64-setup.exe) | Run it. Installs for your user only, no admin rights needed. |
+| macOS 12+ (Apple silicon and Intel) | [EyeTimer-macos.dmg](https://github.com/ahmad-amrey/eye_timer/releases/latest/download/EyeTimer-macos.dmg) | Open it and drag **Eye Timer** to Applications, or anywhere you like. |
+| Ubuntu 24.04+ / Debian 13+ (x64) | [EyeTimer-linux-amd64.deb](https://github.com/ahmad-amrey/eye_timer/releases/latest/download/EyeTimer-linux-amd64.deb) | Double-click it, or `sudo apt install ./EyeTimer-linux-amd64.deb`. |
+
+To update, install the newer version the same way. Installing, updating and
+uninstalling never touch your settings. Eye Timer checks for new versions once
+a day and tells you when one is out. You can turn that off in Settings →
+System, or check any time with **Check for updates…** in the menu.
+
+The builds are not code-signed yet, so the first launch shows a warning:
+
+- **Windows:** SmartScreen says "Windows protected your PC". Choose
+  **More info** → **Run anyway**.
+- **macOS:** Gatekeeper says the app "cannot be opened". Right-click the app,
+  choose **Open**, then **Open** again. On macOS 15 and later, use
+  **System Settings → Privacy & Security → Open Anyway**.
+- **Linux:** installing a `.deb` asks for your password, as every Debian
+  package does.
+
 ## Features
 
 - System tray / menu bar / status-area icon with a live progress ring.
@@ -17,8 +43,9 @@ A small eye-rest reminder for Windows, macOS, and Linux, written in C++ with Qt 
   as a full rest. Sleep and resume are handled the same way.
 - Notification tones when a rest starts and when it completes.
 - Optional start at login.
+- Update notifications from GitHub releases.
 - Settings for the work interval, rest duration, pre-break notice, idle
-  behaviour, opacities, colour palette, tones, and suggestion messages.
+  behaviour, opacities, colour palette, tones, updates, and suggestion messages.
 
 | Countdown | Pre-break notice | Settings |
 | --- | --- | --- |
@@ -26,23 +53,39 @@ A small eye-rest reminder for Windows, macOS, and Linux, written in C++ with Qt 
 
 ## Disclaimer
 
-This project was built by AI. It has been tested on Windows 11; the macOS and
-Linux code paths compile against the same Qt APIs but have not been verified on
-those systems yet.
+This project was built by AI. It has been tested on Windows 11 and built and
+tested on Ubuntu 24.04; the macOS build is produced and smoke-tested by CI only.
 
-## Build
+## Settings and data
+
+Open `Settings…` from the tray menu or the countdown's right-click menu.
+Changes apply to the running timer when you press `Save changes`.
+
+Settings (`settings.json`) and update-check state (`state.ini`) live in the
+per-user data folder, separate from the installed program:
+
+| Platform | Settings folder | Program |
+| --- | --- | --- |
+| Windows | `%LOCALAPPDATA%\EyeTimer` | `%LOCALAPPDATA%\Programs\Eye Timer` |
+| macOS | `~/Library/Application Support/EyeTimer` | wherever you put `Eye Timer.app` |
+| Linux | `~/.local/share/EyeTimer` (or `$XDG_DATA_HOME/EyeTimer`) | `/usr/bin/EyeTimer` |
+
+Files written by the earlier Python version are read as they are. To remove
+your settings, delete that folder after uninstalling.
+
+## Build from source
 
 Requirements:
 
-- CMake 3.21+ and a C++20 compiler (MSVC 2022, GCC 11+, Clang 14+)
-- Qt 6.4+ with the Widgets module
-- Optional: Qt Multimedia (tone playback through Qt) and, on Linux, Qt D-Bus
-  (idle time from GNOME/KDE). Without them the app falls back to other methods,
-  described under Notes.
+- CMake 3.21+ and a C++20 compiler (GCC 11+, Clang 14+, MSVC 2022)
+- Qt 6.4+ with the Widgets and Network modules (and Test for the unit tests)
+- macOS and Linux: Qt Multimedia for the tones (otherwise external players
+  are used, see Notes). Linux: Qt D-Bus for idle detection on GNOME/KDE.
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
+ctest --test-dir build
 ```
 
 If CMake cannot find Qt, point it at your Qt install with
@@ -50,69 +93,76 @@ If CMake cannot find Qt, point it at your Qt install with
 
 ### Windows (MSYS2)
 
+From the MSYS2 MINGW64 shell:
+
 ```bash
-pacman -S mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-qt6-base mingw-w64-x86_64-qt6-multimedia
+pacman -S mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-qt6-base mingw-w64-x86_64-qt6-tools
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
-```
-
-To make a folder you can copy to another machine, run this from the MSYS2
-MINGW64 shell:
-
-```bash
 packaging/windows/deploy-msys2.sh build dist/EyeTimer
 ```
 
-It installs the app, runs `windeployqt6`, and copies the MinGW runtime DLLs
-that `windeployqt6` leaves out. Distribute the whole `dist/EyeTimer` folder.
-With an MSVC build of Qt, `cmake --install` followed by `windeployqt` is
-enough.
+`deploy-msys2.sh` collects the app, Qt and the MinGW runtime into
+`dist/EyeTimer`. To turn that into the installer, install
+[Inno Setup 6](https://jrsoftware.org/isinfo.php) and run:
+
+```bash
+iscc /DAppVersion=0.10.0 /DSourceDir=dist\EyeTimer /DOutputDir=dist packaging\windows\eye_timer.iss
+```
 
 ### macOS
 
 ```bash
-brew install cmake qt
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+brew install cmake ninja qt
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 macdeployqt "build/Eye Timer.app"
+packaging/macos/make-dmg.sh "build/Eye Timer.app" dist/EyeTimer-macos.dmg
 ```
 
 The bundle sets `LSUIElement`, so the app lives in the menu bar without a Dock
-icon.
+icon. Release builds use the Qt online installer's universal Qt, so one app
+runs on Apple silicon and Intel Macs.
 
-### Linux
+### Linux (Debian/Ubuntu)
 
 ```bash
-# Debian/Ubuntu
-sudo apt install cmake g++ qt6-base-dev qt6-multimedia-dev
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+sudo apt install cmake ninja-build g++ dpkg-dev qt6-base-dev qt6-multimedia-dev
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
-sudo cmake --install build
+(cd build && cpack)          # builds eye-timer_<version>_amd64.deb
 ```
 
-Installing adds `EyeTimer` to the path, a desktop entry, and an icon.
+## Development
 
-## Run
+- `EyeTimer --render-previews <dir>` renders every window to PNG files and
+  exits, which is handy when working on the UI.
+- `EyeTimer --play-tone start` (or `end`) plays a notification tone and exits.
+- `EYETIMER_UPDATE_URL` points the update check at another URL (`file://`
+  works); `EYETIMER_NO_UPDATE_CHECK=1` turns automatic checks off.
 
-Start `EyeTimer` (`Eye Timer.app` on macOS). The app starts in the system
-tray / menu bar / status area. Click the icon to show or hide the floating
-countdown; right-click it (or the countdown) for the menu.
+### CI and releases
 
-`EyeTimer --render-previews <dir>` renders every window to PNG files and exits,
-which is handy when working on the UI.
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every pull
+request and push to `main`. It builds on Windows, macOS and Linux, runs the
+unit tests, builds the three installers, and tests them the way users get them:
+install, update and uninstall, checking that settings survive.
 
-## Settings
+To publish a release:
 
-Open `Settings…` from the tray menu or the countdown's right-click menu.
-Changes apply to the running timer when you press `Save changes`.
+1. Add a `## [X.Y.Z] - YYYY-MM-DD` section to [CHANGELOG.md](CHANGELOG.md).
+2. Set `project(EyeTimer VERSION X.Y.Z)` in `CMakeLists.txt`.
+3. Merge to `main`, then tag that commit and push the tag:
 
-Settings are stored in `settings.json` in the per-user data folder:
+   ```bash
+   git tag vX.Y.Z
+   git push origin vX.Y.Z
+   ```
 
-- Windows: `%LOCALAPPDATA%\EyeTimer`
-- macOS: `~/Library/Application Support/EyeTimer`
-- Linux: `$XDG_DATA_HOME/EyeTimer` (usually `~/.local/share/EyeTimer`)
-
-Files written by the earlier Python version are read as-is.
+CI checks that the tag matches the version and the changelog, then publishes a
+GitHub release with the installers, `SHA256SUMS.txt`, and the changelog
+section as release notes. Running copies of Eye Timer pick it up at their next
+daily update check.
 
 ## Fonts
 
@@ -124,10 +174,10 @@ the executable (or in `assets/fonts` for development builds).
 ## Notes
 
 - **Tones:** played after a short silent lead-in so slow-waking audio devices
-  don't clip the start. On Windows the MP3 is decoded once with Media
-  Foundation and played from memory with `PlaySound`. On macOS and Linux Qt
-  Multimedia is used when available; otherwise macOS uses `afplay`, and Linux
-  tries `mpg123`, `ffplay`, `gst-play-1.0`, then `paplay`.
+  don't clip the start. On Windows the MP3 is decoded with Media Foundation and
+  played from memory with `PlaySound`. On macOS and Linux Qt Multimedia plays
+  them on a dedicated thread; without it macOS uses `afplay`, and Linux tries
+  `mpg123`, `pw-play`, `ffplay`, `gst-play-1.0`, then `paplay`.
 - **Idle detection:** Windows uses `GetLastInputInfo`, macOS uses IOKit's
   `HIDIdleTime`. Linux tries GNOME Mutter or the freedesktop ScreenSaver
   interface over D-Bus, then `xprintidle`, then the XScreenSaver extension.
