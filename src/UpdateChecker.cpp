@@ -148,6 +148,16 @@ void UpdateChecker::finishWith(const ReleaseInfo &release)
         emit finished(Result::UpToDate, release, {});
 }
 
+QUrl UpdateChecker::safeReleasePageUrl(const QString &url)
+{
+    const QUrl candidate(url, QUrl::StrictMode);
+    const bool trusted = candidate.isValid() && candidate.scheme() == QLatin1String("https")
+                         && candidate.host() == QLatin1String("github.com") && candidate.port() == -1
+                         && candidate.userInfo().isEmpty()
+                         && candidate.path().startsWith(QLatin1String("/ahmad-amrey/eye_timer/releases/"));
+    return trusted ? candidate : QUrl(QString::fromLatin1(kReleasesPageUrl));
+}
+
 QString UpdateChecker::tagFromReleasePageUrl(const QUrl &url)
 {
     static const QRegularExpression pattern(QStringLiteral("/releases/tag/([^/]+)/?$"));
