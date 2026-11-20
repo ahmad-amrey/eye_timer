@@ -139,3 +139,9 @@ else()
     install(FILES "${EYETIMER_ASSET_DIR}/icon.png" DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/512x512/apps
             RENAME eye-timer.png)
 endif()
+
+include(CTest)
+if(BUILD_TESTING)
+    find_package(Qt6 REQUIRED COMPONENTS Test)
+    add_subdirectory(tests)
+endif()
