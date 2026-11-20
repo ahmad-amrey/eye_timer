@@ -1,0 +1,244 @@
+# Builds and tests Eye Timer on every pull request and push to main, and
+# publishes a GitHub release with installers when a vX.Y.Z tag is pushed.
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  QT_VERSION: "6.8.3"
+
+jobs:
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read and check the version
+        id: version
+        run: |
+          version=$(sed -n 's/^project(EyeTimer VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          if [ -z "$version" ]; then
+            echo "::error file=CMakeLists.txt::no version in project(EyeTimer VERSION ...)"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Version $version"
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match the project version $version"
+            exit 1
+          fi
+          if ! sh tools/changelog_section.sh "$version" > /dev/null; then
+            if [ "$GITHUB_REF_TYPE" = tag ]; then
+              echo "::error file=CHANGELOG.md::no '## [$version] - date' section"
+              exit 1
+            fi
+            echo "::warning file=CHANGELOG.md::no section for $version yet"
+          fi
+
+  windows:
+    name: Windows
+    needs: version
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-qt6-base
+            mingw-w64-x86_64-qt6-tools
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+      - name: Bundle Qt and the MinGW runtime
+        run: packaging/windows/deploy-msys2.sh build dist/EyeTimer
+      - name: Smoke-test the bundle without MSYS2 on PATH
+        shell: pwsh
+        run: |
+          & dist\EyeTimer\EyeTimer.exe --render-previews previews | Out-Null
+          if (-not (Test-Path previews\rest-overlay.png)) { throw "the bundled app did not start" }
+      - name: Build the installer
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup --no-progress -y
+          }
+          & $iscc /Q "/DAppVersion=${{ needs.version.outputs.version }}" "/DSourceDir=$PWD\dist\EyeTimer" "/DOutputDir=$PWD\installer" packaging\windows\eye_timer.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
+      - name: Test install, update and uninstall keep settings
+        shell: pwsh
+        run: |
+          $setup = "installer\EyeTimer-windows-x64-setup.exe"
+          $app = "$env:LOCALAPPDATA\Programs\Eye Timer"
+          $settings = "$env:LOCALAPPDATA\EyeTimer\settings.json"
+          New-Item -ItemType Directory -Force (Split-Path $settings) | Out-Null
+          Set-Content $settings '{"rest_interval_seconds": 1500}'
+
+          Start-Process $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -Wait
+          if (-not (Test-Path "$app\EyeTimer.exe")) { throw "not installed per user in $app" }
+          Start-Process $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -Wait
+          if (-not (Test-Path "$app\EyeTimer.exe")) { throw "update removed the app" }
+
+          Start-Process "$app\unins000.exe" -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -Wait
+          for ($i = 0; $i -lt 30 -and (Test-Path "$app\EyeTimer.exe"); $i++) { Start-Sleep 1 }
+          if (Test-Path "$app\EyeTimer.exe") { throw "uninstall left the app behind" }
+          if ((Get-Content $settings -Raw) -notmatch '1500') { throw "settings were changed or removed" }
+          Write-Host "Per-user install, update and uninstall OK; settings kept."
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: installer/EyeTimer-windows-x64-setup.exe
+          retention-days: ${{ github.ref_type == 'tag' && 30 || 7 }}
+
+  linux:
+    name: Linux
+    needs: version
+    runs-on: ubuntu-24.04
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build g++ dpkg-dev file \
+            qt6-base-dev qt6-multimedia-dev libgl-dev
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+      - name: Build the Debian package
+        run: |
+          (cd build && cpack)
+          mkdir -p dist
+          cp build/eye-timer_*_amd64.deb dist/EyeTimer-linux-amd64.deb
+          dpkg-deb --info dist/EyeTimer-linux-amd64.deb
+      - name: Test install, upgrade and removal keep settings
+        run: |
+          settings="$HOME/.local/share/EyeTimer/settings.json"
+          mkdir -p "$(dirname "$settings")"
+          echo '{"rest_interval_seconds": 1500}' > "$settings"
+
+          sudo apt-get install -y ./dist/EyeTimer-linux-amd64.deb
+          EyeTimer --render-previews /tmp/previews
+          test -f /tmp/previews/rest-overlay.png
+          sudo apt-get install -y --reinstall ./dist/EyeTimer-linux-amd64.deb
+          sudo apt-get remove -y eye-timer
+          ! command -v EyeTimer
+          grep -q 1500 "$settings" || { echo "::error::settings were changed or removed"; exit 1; }
+          echo "Install, upgrade and removal OK; settings kept."
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/EyeTimer-linux-amd64.deb
+          retention-days: ${{ github.ref_type == 'tag' && 30 || 7 }}
+
+  macos:
+    name: macOS
+    needs: version
+    runs-on: macos-15
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: mac
+          target: desktop
+          arch: clang_64
+          modules: qtmultimedia
+          cache: true
+      - name: Install Ninja
+        run: brew install ninja
+      - name: Configure (universal arm64 + x86_64)
+        run: >-
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0
+      - name: Build
+        run: cmake --build build
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+      - name: Bundle Qt into the app
+        run: |
+          macdeployqt "build/Eye Timer.app" -verbose=1
+          # Ad hoc signature only: there is no Developer ID yet.
+          codesign --force --deep --sign - "build/Eye Timer.app"
+          lipo -info "build/Eye Timer.app/Contents/MacOS/Eye Timer"
+      - name: Smoke-test the bundle
+        run: |
+          "build/Eye Timer.app/Contents/MacOS/Eye Timer" --render-previews previews
+          test -f previews/rest-overlay.png
+      - name: Build the disk image
+        run: packaging/macos/make-dmg.sh "build/Eye Timer.app" dist/EyeTimer-macos.dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/EyeTimer-macos.dmg
+          retention-days: ${{ github.ref_type == 'tag' && 30 || 7 }}
+
+  release:
+    name: Release
+    if: github.ref_type == 'tag'
+    needs: [version, windows, linux, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check the tag is on main
+        run: |
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF_NAME is not on main; tag a commit from main to release"
+            exit 1
+          fi
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Write checksums and release notes
+        run: |
+          (cd dist && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt)
+          {
+            sh tools/changelog_section.sh "$VERSION"
+            echo
+            cat packaging/release-downloads.md
+          } > notes.md
+      - name: Publish the release
+        run: >-
+          gh release create "$GITHUB_REF_NAME" dist/*
+          --verify-tag --title "Eye Timer $VERSION" --notes-file notes.md
