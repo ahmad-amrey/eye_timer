@@ -49,6 +49,9 @@ public:
     static std::optional<ReleaseInfo> parseRelease(const QByteArray &json, QString *error);
     // The tag a ".../releases/tag/<tag>" URL points at; empty for anything else.
     static QString tagFromReleasePageUrl(const QUrl &url);
+    // `url` when it is one of this repository's release pages on github.com,
+    // otherwise the latest-release page; the Download button only opens these.
+    static QUrl safeReleasePageUrl(const QString &url);
     // First paragraph of release notes as plain text, cut to `maxChars`.
     static QString summarize(const QString &markdown, int maxChars = 220);
 

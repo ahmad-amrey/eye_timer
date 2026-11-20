@@ -114,9 +114,8 @@ UpdateDialog::UpdateDialog(UpdateChecker::Result result, const ReleaseInfo &rele
             adjustSize();
         });
         connect(download, &QPushButton::clicked, this, [this, pageUrl] {
-            QDesktopServices::openUrl(QUrl(pageUrl.isEmpty()
-                                               ? QStringLiteral("https://github.com/ahmad-amrey/eye_timer/releases/latest")
-                                               : pageUrl));
+            // Only ever this repository's release pages, whatever the response said.
+            QDesktopServices::openUrl(UpdateChecker::safeReleasePageUrl(pageUrl));
             accept();
         });
     } else {

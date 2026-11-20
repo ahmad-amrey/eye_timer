@@ -174,6 +174,30 @@ private slots:
         QCOMPARE(UpdateChecker::tagFromReleasePageUrl(QUrl(url)), tag);
     }
 
+    void safeReleasePageUrl_data()
+    {
+        QTest::addColumn<QString>("url");
+        QTest::addColumn<bool>("kept");
+        QTest::newRow("release tag page") << "https://github.com/ahmad-amrey/eye_timer/releases/tag/v0.11.0" << true;
+        QTest::newRow("latest page") << "https://github.com/ahmad-amrey/eye_timer/releases/latest" << true;
+        QTest::newRow("other repository") << "https://github.com/someone/eye_timer/releases/tag/v9" << false;
+        QTest::newRow("look-alike host") << "https://github.com.evil.example/ahmad-amrey/eye_timer/releases/" << false;
+        QTest::newRow("user info trick") << "https://github.com@evil.example/ahmad-amrey/eye_timer/releases/" << false;
+        QTest::newRow("plain http") << "http://github.com/ahmad-amrey/eye_timer/releases/latest" << false;
+        QTest::newRow("other port") << "https://github.com:8443/ahmad-amrey/eye_timer/releases/latest" << false;
+        QTest::newRow("not releases") << "https://github.com/ahmad-amrey/eye_timer/archive/main.zip" << false;
+        QTest::newRow("file url") << "file:///C:/Windows/System32/calc.exe" << false;
+        QTest::newRow("empty") << "" << false;
+    }
+
+    void safeReleasePageUrl()
+    {
+        QFETCH(QString, url);
+        QFETCH(bool, kept);
+        const QUrl expected = kept ? QUrl(url) : QUrl(QString::fromLatin1(UpdateChecker::kReleasesPageUrl));
+        QCOMPARE(UpdateChecker::safeReleasePageUrl(url), expected);
+    }
+
     void rateLimitedApiFallsBackToReleasePage()
     {
         FakeGitHub github({{"GET /api", kRateLimited}, {"HEAD /latest", kRedirectToTag}});
