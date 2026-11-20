@@ -4,10 +4,57 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSignalSpy>
+#include <QTcpServer>
+#include <QTcpSocket>
 #include <QTemporaryDir>
 #include <QTest>
 
 Q_DECLARE_METATYPE(ReleaseInfo)
+
+// Minimal HTTP server standing in for api.github.com and github.com: each
+// "METHOD /path" gets a canned raw response.
+class FakeGitHub : public QObject
+{
+public:
+    explicit FakeGitHub(QHash<QByteArray, QByteArray> routes)
+        : m_routes(std::move(routes))
+    {
+        connect(&m_server, &QTcpServer::newConnection, this, [this] {
+            while (QTcpSocket *socket = m_server.nextPendingConnection()) {
+                connect(socket, &QTcpSocket::readyRead, socket, [this, socket] {
+                    m_buffer[socket] += socket->readAll();
+                    if (!m_buffer[socket].contains("\r\n\r\n"))
+                        return;
+                    const QList<QByteArray> requestLine = m_buffer[socket].left(m_buffer[socket].indexOf("\r\n")).split(' ');
+                    const QByteArray key = requestLine.value(0) + ' ' + requestLine.value(1);
+                    socket->write(m_routes.value(key, "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"));
+                    socket->disconnectFromHost();
+                });
+                connect(socket, &QTcpSocket::disconnected, socket, &QObject::deleteLater);
+            }
+        });
+        m_server.listen(QHostAddress::LocalHost);
+    }
+
+    QString url(const char *path) const
+    {
+        return QStringLiteral("http://127.0.0.1:%1%2").arg(m_server.serverPort()).arg(QLatin1String(path));
+    }
+
+private:
+    QTcpServer m_server;
+    QHash<QByteArray, QByteArray> m_routes;
+    QHash<QTcpSocket *, QByteArray> m_buffer;
+};
+
+namespace {
+const QByteArray kRateLimited = "HTTP/1.1 403 rate limit exceeded\r\nX-RateLimit-Limit: 60\r\nX-RateLimit-Remaining: 0\r\n"
+                                "X-RateLimit-Reset: 4102444800\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+const QByteArray kRedirectToTag = "HTTP/1.1 302 Found\r\n"
+                                  "Location: https://github.com/ahmad-amrey/eye_timer/releases/tag/v0.11.0\r\n"
+                                  "Content-Length: 0\r\nConnection: close\r\n\r\n";
+const QByteArray kServerError = "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+} // namespace
 
 // Exercises the full check against file:// responses, so no test touches GitHub.
 class TestUpdateChecker : public QObject
@@ -25,6 +72,7 @@ private slots:
     void cleanup()
     {
         qunsetenv("EYETIMER_UPDATE_URL");
+        qunsetenv("EYETIMER_RELEASES_PAGE_URL");
     }
 
     void defaultEndpoint()
@@ -107,6 +155,56 @@ private slots:
         QVERIFY(spy.wait(5000));
         QCOMPARE(spy.first().at(0).value<UpdateChecker::Result>(), expected);
         QVERIFY(!checker.isChecking());
+    }
+
+    void tagFromReleasePageUrl_data()
+    {
+        QTest::addColumn<QString>("url");
+        QTest::addColumn<QString>("tag");
+        QTest::newRow("tag page") << "https://github.com/ahmad-amrey/eye_timer/releases/tag/v0.11.0" << "v0.11.0";
+        QTest::newRow("trailing slash") << "https://github.com/a/b/releases/tag/v1.2.3/" << "v1.2.3";
+        QTest::newRow("no release yet") << "https://github.com/ahmad-amrey/eye_timer/releases" << "";
+        QTest::newRow("empty") << "" << "";
+    }
+
+    void tagFromReleasePageUrl()
+    {
+        QFETCH(QString, url);
+        QFETCH(QString, tag);
+        QCOMPARE(UpdateChecker::tagFromReleasePageUrl(QUrl(url)), tag);
+    }
+
+    void rateLimitedApiFallsBackToReleasePage()
+    {
+        FakeGitHub github({{"GET /api", kRateLimited}, {"HEAD /latest", kRedirectToTag}});
+        qputenv("EYETIMER_UPDATE_URL", github.url("/api").toUtf8());
+        qputenv("EYETIMER_RELEASES_PAGE_URL", github.url("/latest").toUtf8());
+
+        UpdateChecker checker(QStringLiteral("0.10.0"));
+        QSignalSpy spy(&checker, &UpdateChecker::finished);
+        checker.check();
+        QVERIFY(spy.wait(5000));
+        QCOMPARE(spy.first().at(0).value<UpdateChecker::Result>(), UpdateChecker::Result::UpdateAvailable);
+        const auto release = spy.first().at(1).value<ReleaseInfo>();
+        QCOMPARE(release.version, QStringLiteral("0.11.0"));
+        QCOMPARE(release.pageUrl, QStringLiteral("https://github.com/ahmad-amrey/eye_timer/releases/tag/v0.11.0"));
+        QVERIFY(release.notes.isEmpty());
+    }
+
+    void rateLimitedEverywhereSaysSo()
+    {
+        FakeGitHub github({{"GET /api", kRateLimited}, {"HEAD /latest", kServerError}});
+        qputenv("EYETIMER_UPDATE_URL", github.url("/api").toUtf8());
+        qputenv("EYETIMER_RELEASES_PAGE_URL", github.url("/latest").toUtf8());
+
+        UpdateChecker checker(QStringLiteral("0.10.0"));
+        QSignalSpy spy(&checker, &UpdateChecker::finished);
+        checker.check();
+        QVERIFY(spy.wait(5000));
+        QCOMPARE(spy.first().at(0).value<UpdateChecker::Result>(), UpdateChecker::Result::Failed);
+        const QString error = spy.first().at(2).toString();
+        QVERIFY2(error.contains(QStringLiteral("limiting update checks")), qPrintable(error));
+        QVERIFY2(error.contains(QStringLiteral("Try again after")), qPrintable(error));
     }
 
     void missingEndpointFails()

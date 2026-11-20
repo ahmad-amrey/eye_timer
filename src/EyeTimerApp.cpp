@@ -533,7 +533,10 @@ void EyeTimerApp::checkForUpdatesNow()
 
 void EyeTimerApp::handleUpdateResult(UpdateChecker::Result result, const ReleaseInfo &release, const QString &error)
 {
-    stateStore()->setValue(QStringLiteral("updates/lastCheck"), QDateTime::currentDateTimeUtc());
+    // Only an answer counts as today's check; after a failure the next poll
+    // (within six hours) tries again.
+    if (result != UpdateChecker::Result::Failed)
+        stateStore()->setValue(QStringLiteral("updates/lastCheck"), QDateTime::currentDateTimeUtc());
 
     if (result == UpdateChecker::Result::UpdateAvailable)
         m_availableUpdate = release;

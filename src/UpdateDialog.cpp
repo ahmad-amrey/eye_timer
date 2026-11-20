@@ -94,6 +94,9 @@ UpdateDialog::UpdateDialog(UpdateChecker::Result result, const ReleaseInfo &rele
         m_notesToggle = makeButton(QStringLiteral("What’s new"), "secondaryButton", this);
         auto *download = makeButton(QStringLiteral("Download"), "primaryButton", this);
         download->setDefault(true);
+        // Notes are missing when only the release page answered; Download
+        // still opens the release, which shows them.
+        m_notesToggle->setVisible(!release.notes.isEmpty());
         buttons->addWidget(skip);
         buttons->addStretch(1);
         buttons->addWidget(m_notesToggle);
