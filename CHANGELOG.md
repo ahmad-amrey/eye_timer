@@ -11,6 +11,17 @@ X.Y.Z)` in `CMakeLists.txt`. Merging it publishes the release: CI tags the
 merge commit and releases the pull request's build without building again, and
 the section becomes the release notes.
 
+## [0.10.3] - 2026-11-21
+
+Updates download the right installer directly.
+
+### Changed
+- "Download" in the update notice now downloads this computer's installer
+  straight away (the setup program on Windows, the disk image on macOS, the
+  `.deb` package on Debian and Ubuntu) instead of opening the release page
+  with every file on it. On other Linux systems it still opens the release
+  page.
+
 ## [0.10.2] - 2026-11-21
 
 macOS window fixes.
