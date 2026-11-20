@@ -1,5 +1,12 @@
 # Builds and tests Eye Timer on every pull request and push to main, and
 # publishes a GitHub release with installers when a vX.Y.Z tag is pushed.
+#
+# Each successful build is recorded under the git tree hash of the code it
+# built (a "tested-<tree>" artifact). When a later run sees exactly the same
+# code, typically the push of a merged pull request that was up to date with
+# main, or a tag on a commit main already built, it skips the build and a
+# release publishes the installers from that earlier run. Anything that
+# differs is built and tested again.
 name: CI
 
 on:
@@ -9,6 +16,11 @@ on:
     branches: [main]
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      rebuild:
+        description: Build even if this exact code was built before
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -24,8 +36,13 @@ jobs:
   version:
     name: Version
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     outputs:
       version: ${{ steps.version.outputs.version }}
+      tree: ${{ steps.reuse.outputs.tree }}
+      reuse-run: ${{ steps.reuse.outputs.run }}
     steps:
       - uses: actions/checkout@v4
       - name: Read and check the version
@@ -49,10 +66,43 @@ jobs:
             fi
             echo "::warning file=CHANGELOG.md::no section for $version yet"
           fi
+      - name: Look for an earlier build of exactly this code
+        id: reuse
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REBUILD: ${{ inputs.rebuild && 'true' || 'false' }}
+        run: |
+          tree=$(git rev-parse 'HEAD^{tree}')
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          echo "Code tree: $tree"
+          if [ "$REBUILD" = true ]; then
+            echo "Rebuild requested."
+            exit 0
+          fi
+          # Only builds from this repository's own branches, never from a fork's
+          # pull request, whose workflow could have produced anything.
+          run=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=tested-$tree&per_page=20" --jq '
+            [.artifacts[] | select(.expired | not)
+                          | select(.workflow_run.head_repository_id == .workflow_run.repository_id)]
+            | .[0].workflow_run.id // empty')
+          if [ -z "$run" ]; then
+            echo "No earlier build of this code; building it."
+            exit 0
+          fi
+          installers=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/artifacts?per_page=50" --jq '
+            [.artifacts[] | select(.expired | not) | .name
+                          | select(. == "windows" or . == "linux" or . == "macos")] | length')
+          if [ "$installers" != 3 ]; then
+            echo "Run $run built this code, but its installers have expired; building again."
+            exit 0
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+          echo "::notice title=Reusing an earlier build::This exact code was built and tested in run $run ($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run), so the builds are skipped."
 
   windows:
     name: Windows
     needs: version
+    if: needs.version.outputs.reuse-run == ''
     runs-on: windows-latest
     defaults:
       run:
@@ -131,6 +181,7 @@ jobs:
   linux:
     name: Linux
     needs: version
+    if: needs.version.outputs.reuse-run == ''
     runs-on: ubuntu-24.04
     env:
       QT_QPA_PLATFORM: offscreen
@@ -182,6 +233,7 @@ jobs:
   macos:
     name: macOS
     needs: version
+    if: needs.version.outputs.reuse-run == ''
     runs-on: macos-15
     env:
       QT_QPA_PLATFORM: offscreen
@@ -228,13 +280,53 @@ jobs:
           path: dist/EyeTimer-macos.dmg
           retention-days: ${{ github.ref_type == 'tag' && 30 || 7 }}
 
+  # The one check to require in branch protection. It always runs, so a
+  # failed or cancelled build fails it; a skipped job would count as passing.
+  tested:
+    name: Tested
+    if: always()
+    needs: [version, windows, linux, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check every build passed or was reused
+        env:
+          VERSION_RESULT: ${{ needs.version.result }}
+          REUSED_RUN: ${{ needs.version.outputs.reuse-run }}
+          WINDOWS: ${{ needs.windows.result }}
+          LINUX: ${{ needs.linux.result }}
+          MACOS: ${{ needs.macos.result }}
+        run: |
+          echo "Version: $VERSION_RESULT, Windows: $WINDOWS, Linux: $LINUX, macOS: $MACOS"
+          if [ "$VERSION_RESULT" != success ]; then
+            echo "::error::the version checks failed"
+            exit 1
+          fi
+          if [ -n "$REUSED_RUN" ]; then
+            echo "Built and tested earlier in run $REUSED_RUN."
+            exit 0
+          fi
+          if [ "$WINDOWS" != success ] || [ "$LINUX" != success ] || [ "$MACOS" != success ]; then
+            echo "::error::not every platform built and passed"
+            exit 1
+          fi
+      - name: Record that this code built and passed everywhere
+        if: needs.version.outputs.reuse-run == ''
+        run: echo "${{ github.run_id }}" > tested.txt
+      - if: needs.version.outputs.reuse-run == ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: tested-${{ needs.version.outputs.tree }}
+          path: tested.txt
+          retention-days: ${{ github.ref_type == 'tag' && 30 || 7 }}
+
   release:
     name: Release
     if: github.ref_type == 'tag'
-    needs: [version, windows, linux, macos]
+    needs: [version, tested]
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: read
     env:
       VERSION: ${{ needs.version.outputs.version }}
       GH_TOKEN: ${{ github.token }}
@@ -248,10 +340,14 @@ jobs:
             echo "::error::$GITHUB_REF_NAME is not on main; tag a commit from main to release"
             exit 1
           fi
-      - uses: actions/download-artifact@v4
+      - name: Download the installers (from this run or the earlier build)
+        uses: actions/download-artifact@v4
         with:
           path: dist
+          pattern: "{windows,linux,macos}"
           merge-multiple: true
+          run-id: ${{ needs.version.outputs.reuse-run || github.run_id }}
+          github-token: ${{ github.token }}
       - name: Write checksums and release notes
         run: |
           (cd dist && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt)

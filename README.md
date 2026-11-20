@@ -148,6 +148,22 @@ request and push to `main`. It builds on Windows, macOS and Linux, runs the
 unit tests, builds the three installers, and tests them the way users get them:
 install, update and uninstall, checking that settings survive.
 
+Code is built and tested once. Every successful build is recorded under the
+git tree hash of the code it built. When a later run has exactly the same
+code, such as the push of a merged pull request that was up to date with
+`main`, or a tag on a commit `main` already built, it skips the builds, and a
+release publishes the installers from the earlier run. Anything that differs
+is built and tested again. To force a fresh build, run the workflow manually
+from the Actions tab with **rebuild** ticked.
+
+Protect `main` with a ruleset (Settings → Rules → Rulesets → New branch
+ruleset, target the default branch) that requires a pull request and the
+**Tested** status check, with "Require branches to be up to date before
+merging" on, and blocks force pushes. **Tested** is the one check to require:
+it always runs and fails if any platform failed, while jobs that were skipped
+would count as passing. "Up to date" is also what lets the push after a merge
+reuse the pull request's build.
+
 To publish a release:
 
 1. Add a `## [X.Y.Z] - YYYY-MM-DD` section to [CHANGELOG.md](CHANGELOG.md).
