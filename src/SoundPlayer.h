@@ -1,9 +1,11 @@
 #pragma once
 
+#include <QHash>
 #include <QObject>
 #include <QStringList>
 
-#ifdef EYETIMER_HAS_MULTIMEDIA
+#if defined(EYETIMER_HAS_MULTIMEDIA) && !defined(Q_OS_WIN)
+#define EYETIMER_QT_AUDIO 1
 #include <QAudioFormat>
 #include <QList>
 
@@ -14,10 +16,14 @@ class QBuffer;
 
 // Plays the short notification tones.
 //
-// With Qt Multimedia the MP3 is decoded up front and played with a short
-// silent lead-in, so audio devices that wake up slowly (Bluetooth, HDMI) do
-// not clip the start. Without it the platform player is used instead:
-// MCI on Windows, afplay on macOS, and mpg123/ffplay/gst-play on Linux.
+// Every path plays the tone after a short silent lead-in, so audio devices
+// that wake up slowly (Bluetooth, HDMI) do not clip the start.
+//   Windows: the MP3 is decoded once with Media Foundation and played from
+//            memory with PlaySound, which streams on the system's own audio
+//            thread. (MCI/DirectShow playback stuttered.)
+//   macOS/Linux with Qt Multimedia: decoded with QAudioDecoder, played with
+//            QAudioSink.
+//   Otherwise: afplay on macOS, mpg123/ffplay/gst-play/paplay on Linux.
 class SoundPlayer : public QObject
 {
     Q_OBJECT
@@ -29,8 +35,16 @@ public:
     void play(const QString &filePath);
     void stopAll();
 
+#if defined(Q_OS_WIN)
+    // The in-memory WAV that play() hands to PlaySound; empty on failure.
+    static QByteArray decodeToWav(const QString &filePath);
+#endif
+
 private:
-#ifdef EYETIMER_HAS_MULTIMEDIA
+#if defined(Q_OS_WIN)
+    // Decoded WAV images, kept alive while PlaySound reads from them.
+    QHash<QString, QByteArray> m_wavCache;
+#elif defined(EYETIMER_QT_AUDIO)
     struct Decode {
         QAudioDecoder *decoder = nullptr;
         QAudioFormat format;
@@ -49,8 +63,5 @@ private:
     QList<Playback> m_playbacks;
 #else
     void playWithPlatformPlayer(const QString &filePath);
-
-    QStringList m_mciAliases;
-    int m_mciCounter = 0;
 #endif
 };

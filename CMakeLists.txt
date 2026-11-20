@@ -51,7 +51,7 @@ if(TARGET Qt6::DBus)
 endif()
 
 if(WIN32)
-    target_link_libraries(eyetimer_core PUBLIC shell32 ole32 uuid winmm)
+    target_link_libraries(eyetimer_core PUBLIC shell32 ole32 uuid winmm mfplat mfreadwrite mfuuid)
     target_compile_definitions(eyetimer_core PUBLIC UNICODE _UNICODE NOMINMAX)
 elseif(APPLE)
     target_link_libraries(eyetimer_core PUBLIC "-framework IOKit" "-framework CoreFoundation")

@@ -123,10 +123,11 @@ the executable (or in `assets/fonts` for development builds).
 
 ## Notes
 
-- **Tones:** played through Qt Multimedia when it is available, with a short
-  silent lead-in so slow-waking audio devices don't clip the start. Otherwise
-  Windows uses MCI, macOS uses `afplay`, and Linux tries `mpg123`, `ffplay`,
-  `gst-play-1.0`, then `paplay`.
+- **Tones:** played after a short silent lead-in so slow-waking audio devices
+  don't clip the start. On Windows the MP3 is decoded once with Media
+  Foundation and played from memory with `PlaySound`. On macOS and Linux Qt
+  Multimedia is used when available; otherwise macOS uses `afplay`, and Linux
+  tries `mpg123`, `ffplay`, `gst-play-1.0`, then `paplay`.
 - **Idle detection:** Windows uses `GetLastInputInfo`, macOS uses IOKit's
   `HIDIdleTime`. Linux tries GNOME Mutter or the freedesktop ScreenSaver
   interface over D-Bus, then `xprintidle`, then the XScreenSaver extension.
