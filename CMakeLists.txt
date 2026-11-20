@@ -96,7 +96,7 @@ elseif(APPLE)
     set(EYETIMER_ICNS "${CMAKE_CURRENT_BINARY_DIR}/EyeTimer.icns")
     add_custom_command(
         OUTPUT "${EYETIMER_ICNS}"
-        COMMAND "${CMAKE_COMMAND}" -DSOURCE="${EYETIMER_ASSET_DIR}/icon.png" -DOUTPUT="${EYETIMER_ICNS}"
+        COMMAND "${CMAKE_COMMAND}" "-DSOURCE=${EYETIMER_ASSET_DIR}/icon.png" "-DOUTPUT=${EYETIMER_ICNS}"
                 -P "${CMAKE_CURRENT_SOURCE_DIR}/packaging/macos/make_icns.cmake"
         DEPENDS "${EYETIMER_ASSET_DIR}/icon.png" packaging/macos/make_icns.cmake
         VERBATIM
