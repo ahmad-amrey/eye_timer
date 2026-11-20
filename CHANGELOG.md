@@ -4,16 +4,25 @@ All notable changes to Eye Timer are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
-To release, add a `## [X.Y.Z] - YYYY-MM-DD` section, set the same version in
-`project(EyeTimer VERSION X.Y.Z)` in `CMakeLists.txt`, and push a `vX.Y.Z` tag
-on `main`. The section becomes the release notes.
+Add entries under `## [Unreleased]` as changes land. To release, include in
+the pull request that ships the last change: that section renamed to
+`## [X.Y.Z] - YYYY-MM-DD` and the same version in `project(EyeTimer VERSION
+X.Y.Z)` in `CMakeLists.txt`. After merging, push a `vX.Y.Z` tag on the merge
+commit. CI then publishes the pull request's build without building again, and
+the section becomes the release notes.
 
-## [Unreleased]
+## [0.10.2] - 2026-11-21
+
+macOS window fixes.
 
 ### Fixed
 - macOS: the countdown pill, the "Break soon" panel and the rest overlay no
   longer disappear as soon as you click into another app. They also follow
   you to every desktop (Space) and show over full-screen apps.
+
+### Security
+- The update notice's Download button only opens this project's release pages
+  on GitHub, whatever the update data says.
 
 ## [0.10.1] - 2026-11-21
 
