@@ -2,6 +2,7 @@
 
 #include <QApplication>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QProcess>
 #include <QStandardPaths>
@@ -13,6 +14,10 @@
 #include <mfidl.h>
 #include <mfreadwrite.h>
 #include <mmsystem.h>
+#include <shlwapi.h>
+
+// Exported by mfplat but missing from some MinGW headers.
+extern "C" HRESULT WINAPI MFCreateMFByteStreamOnStream(IStream *stream, IMFByteStream **byteStream);
 #elif defined(EYETIMER_QT_AUDIO)
 #include <QAudioBuffer>
 #include <QAudioDecoder>
@@ -37,10 +42,16 @@ void release(T *&object)
     }
 }
 
-// Decodes an audio file to 16-bit PCM and wraps it in an in-memory WAV image
-// (with the lead-in silence and volume applied) that PlaySound can stream.
+// Decodes an audio file (a path or a ":/" resource) to 16-bit PCM and wraps
+// it in an in-memory WAV image, with the lead-in silence and volume applied,
+// that PlaySound can stream.
 QByteArray decodeFileToWav(const QString &filePath)
 {
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly))
+        return {};
+    const QByteArray encoded = file.readAll();
+
     const HRESULT comInit = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     if (FAILED(MFStartup(MF_VERSION, MFSTARTUP_LITE))) {
         if (SUCCEEDED(comInit))
@@ -52,11 +63,23 @@ QByteArray decodeFileToWav(const QString &filePath)
     UINT32 channels = 0;
     UINT32 sampleRate = 0;
 
+    IStream *stream = SHCreateMemStream(reinterpret_cast<const BYTE *>(encoded.constData()),
+                                        static_cast<UINT>(encoded.size()));
+    IMFByteStream *byteStream = nullptr;
     IMFSourceReader *reader = nullptr;
     IMFMediaType *requested = nullptr;
     IMFMediaType *actual = nullptr;
-    const std::wstring path = QDir::toNativeSeparators(filePath).toStdWString();
-    HRESULT hr = MFCreateSourceReaderFromURL(path.c_str(), nullptr, &reader);
+    HRESULT hr = stream ? MFCreateMFByteStreamOnStream(stream, &byteStream) : E_OUTOFMEMORY;
+    if (SUCCEEDED(hr)) {
+        // Tell the source resolver what it is reading; a memory stream has no
+        // file extension to go by.
+        IMFAttributes *attributes = nullptr;
+        if (SUCCEEDED(byteStream->QueryInterface(IID_IMFAttributes, reinterpret_cast<void **>(&attributes)))) {
+            attributes->SetString(MF_BYTESTREAM_CONTENT_TYPE, L"audio/mpeg");
+            release(attributes);
+        }
+        hr = MFCreateSourceReaderFromByteStream(byteStream, nullptr, &reader);
+    }
     if (SUCCEEDED(hr))
         hr = reader->SetStreamSelection(MF_SOURCE_READER_ALL_STREAMS, FALSE);
     if (SUCCEEDED(hr))
@@ -106,6 +129,8 @@ QByteArray decodeFileToWav(const QString &filePath)
     release(actual);
     release(requested);
     release(reader);
+    release(byteStream);
+    release(stream);
     MFShutdown();
     if (SUCCEEDED(comInit))
         CoUninitialize();
@@ -220,7 +245,13 @@ void SoundPlayer::play(const QString &filePath)
     connect(decode->decoder, QOverload<QAudioDecoder::Error>::of(&QAudioDecoder::error), this,
             [this, decode](QAudioDecoder::Error) { finishDecode(decode); });
 
-    decode->decoder->setSource(QUrl::fromLocalFile(filePath));
+    // Reading through a QFile works for ":/" resources as well as files.
+    auto *file = new QFile(filePath, decode->decoder);
+    if (!file->open(QIODevice::ReadOnly)) {
+        finishDecode(decode);
+        return;
+    }
+    decode->decoder->setSourceDevice(file);
     decode->decoder->start();
 #else
     playWithPlatformPlayer(filePath);
@@ -310,7 +341,21 @@ void SoundPlayer::startPlayback(const QAudioFormat &format, const QByteArray &pc
 
 void SoundPlayer::playWithPlatformPlayer(const QString &filePath)
 {
-    const QString nativePath = QDir::toNativeSeparators(QFileInfo(filePath).absoluteFilePath());
+    // External players need a real file; copy embedded tones to the cache once.
+    QString localPath = filePath;
+    if (filePath.startsWith(QLatin1String(":/"))) {
+        const QString cacheDir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
+        localPath = QDir(cacheDir).filePath(QStringLiteral("tones/") + QFileInfo(filePath).fileName());
+        if (!QFileInfo::exists(localPath)) {
+            QDir().mkpath(QFileInfo(localPath).absolutePath());
+            if (!QFile::copy(filePath, localPath)) {
+                QApplication::beep();
+                return;
+            }
+            QFile::setPermissions(localPath, QFile::ReadOwner | QFile::WriteOwner);
+        }
+    }
+    const QString nativePath = QDir::toNativeSeparators(QFileInfo(localPath).absoluteFilePath());
 
 #if defined(Q_OS_MACOS)
     if (!QProcess::startDetached(QStringLiteral("afplay"),
@@ -319,6 +364,7 @@ void SoundPlayer::playWithPlatformPlayer(const QString &filePath)
 #else
     const QList<QPair<QString, QStringList>> players = {
         {QStringLiteral("mpg123"), {QStringLiteral("-q"), nativePath}},
+        {QStringLiteral("pw-play"), {nativePath}},
         {QStringLiteral("ffplay"),
          {QStringLiteral("-nodisp"), QStringLiteral("-autoexit"), QStringLiteral("-loglevel"), QStringLiteral("quiet"),
           nativePath}},

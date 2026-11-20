@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(EyeTimer VERSION 2.0.0 DESCRIPTION "Eye-rest reminder" LANGUAGES CXX)
+project(EyeTimer VERSION 0.10.0 DESCRIPTION "Eye-rest reminder" LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -51,7 +51,7 @@ if(TARGET Qt6::DBus)
 endif()
 
 if(WIN32)
-    target_link_libraries(eyetimer_core PUBLIC shell32 ole32 uuid winmm mfplat mfreadwrite mfuuid)
+    target_link_libraries(eyetimer_core PUBLIC shell32 shlwapi ole32 uuid winmm mfplat mfreadwrite mfuuid)
     target_compile_definitions(eyetimer_core PUBLIC UNICODE _UNICODE NOMINMAX)
 elseif(APPLE)
     target_link_libraries(eyetimer_core PUBLIC "-framework IOKit" "-framework CoreFoundation")
@@ -60,12 +60,6 @@ elseif(UNIX)
 endif()
 
 # The app: soft light UI, timer logic, tray icon.
-set(EYETIMER_ASSETS
-    "${EYETIMER_ASSET_DIR}/icon.ico"
-    "${EYETIMER_ASSET_DIR}/icon.png"
-    "${EYETIMER_ASSET_DIR}/universfield-new-notification-017-352293.mp3"
-    "${EYETIMER_ASSET_DIR}/universfield-new-notification-017-352293-pitch-changed.mp3"
-)
 
 set(EYETIMER_UI_SOURCES
     src/BreakOverlay.cpp
@@ -89,13 +83,32 @@ if(WIN32)
     configure_file(packaging/windows/eye_timer.rc.in "${CMAKE_CURRENT_BINARY_DIR}/eye_timer.rc" @ONLY)
     list(APPEND EYETIMER_UI_SOURCES "${CMAKE_CURRENT_BINARY_DIR}/eye_timer.rc")
 elseif(APPLE)
-    list(APPEND EYETIMER_UI_SOURCES ${EYETIMER_ASSETS})
-    set_source_files_properties(${EYETIMER_ASSETS} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+    # Bundle icon, generated from the PNG with the macOS tools.
+    set(EYETIMER_ICNS "${CMAKE_CURRENT_BINARY_DIR}/EyeTimer.icns")
+    add_custom_command(
+        OUTPUT "${EYETIMER_ICNS}"
+        COMMAND "${CMAKE_COMMAND}" -DSOURCE="${EYETIMER_ASSET_DIR}/icon.png" -DOUTPUT="${EYETIMER_ICNS}"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/packaging/macos/make_icns.cmake"
+        DEPENDS "${EYETIMER_ASSET_DIR}/icon.png" packaging/macos/make_icns.cmake
+        VERBATIM
+    )
+    list(APPEND EYETIMER_UI_SOURCES "${EYETIMER_ICNS}")
+    set_source_files_properties("${EYETIMER_ICNS}" PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
 endif()
 
 qt_add_executable(EyeTimer WIN32 MACOSX_BUNDLE ${EYETIMER_UI_SOURCES})
 target_link_libraries(EyeTimer PRIVATE eyetimer_core)
 target_compile_definitions(EyeTimer PRIVATE EYETIMER_VERSION="${PROJECT_VERSION}")
+
+# Icon and tones live inside the executable, so every package ships one file.
+qt_add_resources(EyeTimer eyetimer_assets
+    PREFIX "/eyetimer"
+    BASE "${EYETIMER_ASSET_DIR}"
+    FILES
+        "${EYETIMER_ASSET_DIR}/icon.png"
+        "${EYETIMER_ASSET_DIR}/universfield-new-notification-017-352293.mp3"
+        "${EYETIMER_ASSET_DIR}/universfield-new-notification-017-352293-pitch-changed.mp3"
+)
 
 if(APPLE)
     set_target_properties(EyeTimer PROPERTIES
@@ -105,24 +118,17 @@ if(APPLE)
         MACOSX_BUNDLE_BUNDLE_NAME "Eye Timer"
         MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
         MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
-    )
-else()
-    # Icons and tones sit next to the executable, as the app looks for them there.
-    add_custom_command(TARGET EyeTimer POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${EYETIMER_ASSETS} "$<TARGET_FILE_DIR:EyeTimer>"
-        VERBATIM
+        MACOSX_BUNDLE_ICON_FILE "EyeTimer.icns"
     )
 endif()
 
 include(GNUInstallDirs)
 if(WIN32)
     install(TARGETS EyeTimer RUNTIME DESTINATION .)
-    install(FILES ${EYETIMER_ASSETS} DESTINATION .)
 elseif(APPLE)
     install(TARGETS EyeTimer BUNDLE DESTINATION .)
 else()
     install(TARGETS EyeTimer RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-    install(FILES ${EYETIMER_ASSETS} DESTINATION ${CMAKE_INSTALL_DATADIR}/eye-timer)
     install(FILES packaging/linux/eye-timer.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
     install(FILES "${EYETIMER_ASSET_DIR}/icon.png" DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/512x512/apps
             RENAME eye-timer.png)

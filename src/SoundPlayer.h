@@ -22,7 +22,10 @@ class QThread;
 //            thread. (MCI/DirectShow playback stuttered.)
 //   macOS/Linux with Qt Multimedia: decoded with QAudioDecoder, played with
 //            a QAudioSink on its own thread.
-//   Otherwise: afplay on macOS, mpg123/ffplay/gst-play/paplay on Linux.
+//   Otherwise: afplay on macOS, mpg123/pw-play/ffplay/gst-play/paplay on
+//            Linux (embedded tones are copied to the cache folder for them).
+//
+// `filePath` may be a ":/" resource.
 class SoundPlayer : public QObject
 {
     Q_OBJECT

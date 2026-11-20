@@ -44,17 +44,8 @@ QString formatNextBreak(int seconds)
 
 QIcon loadAppIcon()
 {
-#ifdef Q_OS_WIN
-    const QStringList names = {QStringLiteral("icon.ico"), QStringLiteral("icon.png")};
-#else
-    const QStringList names = {QStringLiteral("icon.png"), QStringLiteral("icon.ico")};
-#endif
-    for (const QString &name : names) {
-        const QString path = platform::resourcePath(name);
-        if (QFileInfo::exists(path))
-            return QIcon(path);
-    }
-    return {};
+    // Embedded with qt_add_resources; the Windows .exe icon comes from the .rc file.
+    return QIcon(QStringLiteral(":/eyetimer/icon.png"));
 }
 
 // Tray icon: the same progress ring as the countdown, on a dark tile so it
@@ -379,7 +370,7 @@ void EyeTimerApp::dismissPreparePanel()
 
 QString EyeTimerApp::tonePath(const QString &event)
 {
-    return platform::resourcePath(QString::fromLatin1(event == QStringLiteral("start") ? kRestStartTone : kRestEndTone));
+    return QStringLiteral(":/eyetimer/") + QString::fromLatin1(event == QStringLiteral("start") ? kRestStartTone : kRestEndTone);
 }
 
 void EyeTimerApp::playTone(const QString &event)
