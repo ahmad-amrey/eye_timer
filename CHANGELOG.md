@@ -8,6 +8,24 @@ To release, add a `## [X.Y.Z] - YYYY-MM-DD` section, set the same version in
 `project(EyeTimer VERSION X.Y.Z)` in `CMakeLists.txt`, and push a `vX.Y.Z` tag
 on `main`. The section becomes the release notes.
 
+## [0.10.1] - 2026-11-20
+
+Fixes for update checks and starting with Windows after installing.
+
+### Fixed
+- "Check for updates…" no longer fails with "status code 403" when GitHub
+  limits requests from your network: Eye Timer then reads the latest version
+  from the release page instead. A failed automatic check is retried within a
+  few hours instead of the next day.
+- "Start with Windows/login" now follows the app when it is installed or moved:
+  on launch, a startup entry that is missing or still points at an old copy is
+  written again for the installed app. Switching the setting on in Settings
+  also clears a "Disabled" flag left in Task Manager.
+
+### Added
+- The Windows installer offers "Start Eye Timer when I sign in" on a first
+  install.
+
 ## [0.10.0] - 2026-11-20
 
 Eye Timer is rewritten in C++ with Qt 6 and gets a new look, proper installers
