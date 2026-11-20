@@ -7,8 +7,8 @@ All notable changes to Eye Timer are listed here. The format follows
 Add entries under `## [Unreleased]` as changes land. To release, include in
 the pull request that ships the last change: that section renamed to
 `## [X.Y.Z] - YYYY-MM-DD` and the same version in `project(EyeTimer VERSION
-X.Y.Z)` in `CMakeLists.txt`. After merging, push a `vX.Y.Z` tag on the merge
-commit. CI then publishes the pull request's build without building again, and
+X.Y.Z)` in `CMakeLists.txt`. Merging it publishes the release: CI tags the
+merge commit and releases the pull request's build without building again, and
 the section becomes the release notes.
 
 ## [0.10.2] - 2026-11-21

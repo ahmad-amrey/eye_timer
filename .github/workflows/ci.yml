@@ -1,5 +1,10 @@
-# Builds and tests Eye Timer on every pull request and push to main, and
-# publishes a GitHub release with installers when a vX.Y.Z tag is pushed.
+# Builds and tests Eye Timer on every pull request and push to main.
+#
+# Releases follow the version in CMakeLists.txt: when main gets a version that
+# has no vX.Y.Z tag yet (normally by merging the pull request that raised it),
+# the run creates the tag and publishes the release. Pull requests that raise
+# the version must add its changelog section and stay above the latest
+# release. Pushing a vX.Y.Z tag by hand still publishes too.
 #
 # Actions are pinned to exact commits; update the SHA and the version comment
 # together.
@@ -44,6 +49,7 @@ jobs:
       actions: read
     outputs:
       version: ${{ steps.version.outputs.version }}
+      release: ${{ steps.version.outputs.release }}
       tree: ${{ steps.reuse.outputs.tree }}
       reuse-run: ${{ steps.reuse.outputs.run }}
     steps:
@@ -58,17 +64,37 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Version $version"
-          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
-            echo "::error::tag $GITHUB_REF_NAME does not match the project version $version"
-            exit 1
-          fi
-          if ! sh tools/changelog_section.sh "$version" > /dev/null; then
-            if [ "$GITHUB_REF_TYPE" = tag ]; then
-              echo "::error file=CHANGELOG.md::no '## [$version] - date' section"
+
+          # Published versions are the vX.Y.Z tags.
+          tags=$(git ls-remote --tags --refs origin 'v*' | sed 's#.*refs/tags/v##' | grep -E '^[0-9]+(\.[0-9]+)*$' || true)
+          latest=$(printf '%s\n' "$tags" | sed '/^$/d' | sort -V | tail -1)
+          if printf '%s\n' "$tags" | grep -qxF "$version"; then released=true; else released=false; fi
+          echo "Latest release: ${latest:-none}; $version already released: $released"
+
+          release=false
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+              echo "::error::tag $GITHUB_REF_NAME does not match the project version $version"
               exit 1
             fi
-            echo "::warning file=CHANGELOG.md::no section for $version yet"
+            release=true
+          elif [ "$released" = false ]; then
+            # A new version: it must move forward and come with release notes.
+            if [ -n "$latest" ] && [ "$(printf '%s\n%s\n' "$latest" "$version" | sort -V | tail -1)" != "$version" ]; then
+              echo "::error file=CMakeLists.txt::version $version is lower than the latest release $latest"
+              exit 1
+            fi
+            if [ "$GITHUB_EVENT_NAME" = push ]; then
+              release=true
+            elif [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+              echo "::notice title=Release::Merging this pull request publishes Eye Timer $version."
+            fi
           fi
+          if { [ "$release" = true ] || [ "$released" = false ]; } && ! sh tools/changelog_section.sh "$version" > /dev/null; then
+            echo "::error file=CHANGELOG.md::version $version needs a '## [$version] - YYYY-MM-DD' section"
+            exit 1
+          fi
+          echo "release=$release" >> "$GITHUB_OUTPUT"
       - name: Look for an earlier build of exactly this code
         id: reuse
         env:
@@ -346,7 +372,7 @@ jobs:
     # upstream job to have succeeded, and the platform jobs behind Tested are
     # skipped when an earlier build is reused.
     if: >-
-      !cancelled() && github.ref_type == 'tag'
+      !cancelled() && needs.version.outputs.release == 'true'
       && needs.version.result == 'success' && needs.tested.result == 'success'
     needs: [version, tested]
     runs-on: ubuntu-latest
@@ -361,6 +387,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Check the tag is on main
+        if: github.ref_type == 'tag'
         run: |
           if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
             echo "::error::$GITHUB_REF_NAME is not on main; tag a commit from main to release"
@@ -383,6 +410,13 @@ jobs:
             cat packaging/release-downloads.md
           } > notes.md
       - name: Publish the release
-        run: >-
-          gh release create "$GITHUB_REF_NAME" dist/*
-          --verify-tag --title "Eye Timer $VERSION" --notes-file notes.md
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            gh release create "$GITHUB_REF_NAME" dist/* \
+              --verify-tag --title "Eye Timer $VERSION" --notes-file notes.md
+          else
+            # Creates the vX.Y.Z tag on this commit of main. Tags created with
+            # the workflow's token start no new workflow run.
+            gh release create "v$VERSION" dist/* \
+              --target "$GITHUB_SHA" --title "Eye Timer $VERSION" --notes-file notes.md
+          fi
