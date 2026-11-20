@@ -164,6 +164,36 @@ it always runs and fails if any platform failed, while jobs that were skipped
 would count as passing. "Up to date" is also what lets the push after a merge
 reuse the pull request's build.
 
+#### Security
+
+What protects users from a tampered build:
+
+- **Reuse is limited to the exact reviewed code.** A build is reused only
+  from a successful run of this workflow, in this repository, whose
+  checked-out commit has exactly the same tree. The workflow file is part of
+  that tree, so reused installers always come from the same reviewed
+  workflow. A fork's pull request, or a branch whose workflow was changed,
+  can never supply them.
+- **Only tags publish**, only for a commit on `main`, and only after the tag
+  matches the version and changelog. The release job is the only one with
+  write access. Pull requests from forks get a read-only token, and the
+  workflow uses no secrets.
+- **Actions are pinned to full commit SHAs**, so a moved tag in a third-party
+  action can't change what runs.
+- **The app opens only this repository's release pages** from its update
+  notice. It never downloads or runs anything itself.
+
+Settings to keep in GitHub:
+
+- A **tag ruleset** (Settings → Rules → Rulesets → New tag ruleset) targeting
+  `v*` that restricts creations, updates and deletions, with only you on the
+  bypass list. Then only you can start a release.
+- In Settings → Actions → General, set fork pull request workflows to
+  "Require approval for all external contributors". Leave "Allow GitHub
+  Actions to create and approve pull requests" off.
+- Review changes under `.github/` in pull requests as carefully as code: the
+  workflow decides what gets built and published.
+
 To publish a release:
 
 1. Add a `## [X.Y.Z] - YYYY-MM-DD` section to [CHANGELOG.md](CHANGELOG.md).
