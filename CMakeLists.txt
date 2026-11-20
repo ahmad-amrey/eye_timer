@@ -6,12 +6,13 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-option(EYETIMER_WITH_MULTIMEDIA "Play tones through Qt Multimedia when it is installed" ON)
+# Windows plays tones with PlaySound, so Qt Multimedia only matters elsewhere.
+option(EYETIMER_WITH_MULTIMEDIA "Play tones through Qt Multimedia when it is installed (macOS/Linux)" ON)
 
 find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Widgets Network)
 qt_standard_project_setup()
 
-if(EYETIMER_WITH_MULTIMEDIA)
+if(EYETIMER_WITH_MULTIMEDIA AND NOT WIN32)
     find_package(Qt6 QUIET COMPONENTS Multimedia)
 endif()
 if(UNIX AND NOT APPLE)
@@ -41,7 +42,9 @@ target_include_directories(eyetimer_core PUBLIC src)
 target_link_libraries(eyetimer_core PUBLIC Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network)
 target_compile_definitions(eyetimer_core PRIVATE EYETIMER_ASSET_DIR="${EYETIMER_ASSET_DIR}")
 
-if(TARGET Qt6::Multimedia)
+if(WIN32)
+    message(STATUS "Eye Timer: tones play through Media Foundation and PlaySound")
+elseif(TARGET Qt6::Multimedia)
     target_link_libraries(eyetimer_core PUBLIC Qt6::Multimedia)
     target_compile_definitions(eyetimer_core PUBLIC EYETIMER_HAS_MULTIMEDIA)
     message(STATUS "Eye Timer: tones play through Qt Multimedia")
@@ -106,6 +109,7 @@ qt_add_executable(EyeTimer WIN32 MACOSX_BUNDLE ${EYETIMER_UI_SOURCES})
 target_link_libraries(EyeTimer PRIVATE eyetimer_core)
 target_compile_definitions(EyeTimer PRIVATE EYETIMER_VERSION="${PROJECT_VERSION}")
 
+
 # Icon and tones live inside the executable, so every package ships one file.
 qt_add_resources(EyeTimer eyetimer_assets
     PREFIX "/eyetimer"
@@ -138,6 +142,31 @@ else()
     install(FILES packaging/linux/eye-timer.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
     install(FILES "${EYETIMER_ASSET_DIR}/icon.png" DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/512x512/apps
             RENAME eye-timer.png)
+endif()
+
+# Linux package: `cpack --config build/CPackConfig.cmake` builds a .deb that
+# installs to /usr. User settings in ~/.local/share/EyeTimer are never touched
+# by installing, upgrading or removing it.
+if(UNIX AND NOT APPLE)
+    set(CPACK_GENERATOR "DEB")
+    set(CPACK_PACKAGE_NAME "eye-timer")
+    set(CPACK_PACKAGE_VENDOR "Ahmad AlAmrey")
+    set(CPACK_PACKAGE_CONTACT "Ahmad AlAmrey <ahmad-amrey@users.noreply.github.com>")
+    set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Eye-rest reminder following the 20-20-20 rule")
+    set(CPACK_PACKAGE_DESCRIPTION
+        "Eye Timer lives in the system tray and reminds you to rest your eyes: after a stretch of active "
+        "computer use it shows a full-screen rest overlay with a short countdown and a healthy suggestion. "
+        "Idle time pauses the timer, and a long absence counts as a rest.")
+    set(CPACK_PACKAGING_INSTALL_PREFIX "/usr")
+    set(CPACK_DEBIAN_FILE_NAME "DEB-DEFAULT")
+    set(CPACK_DEBIAN_PACKAGE_SECTION "utils")
+    set(CPACK_DEBIAN_PACKAGE_HOMEPAGE "https://github.com/ahmad-amrey/eye_timer")
+    # Qt and system libraries are found by dpkg-shlibdeps; GStreamer's plugins
+    # are what Qt Multimedia uses to decode and play the MP3 tones.
+    set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+    set(CPACK_DEBIAN_PACKAGE_DEPENDS "gstreamer1.0-plugins-base, gstreamer1.0-plugins-good")
+    set(CPACK_DEBIAN_PACKAGE_SUGGESTS "wmctrl")
+    include(CPack)
 endif()
 
 include(CTest)
