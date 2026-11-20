@@ -107,7 +107,7 @@ packaging/windows/deploy-msys2.sh build dist/EyeTimer
 [Inno Setup 6](https://jrsoftware.org/isinfo.php) and run:
 
 ```bash
-iscc /DAppVersion=0.10.1 /DSourceDir=dist\EyeTimer /DOutputDir=dist packaging\windows\eye_timer.iss
+iscc /DAppVersion=0.10.2 /DSourceDir=dist\EyeTimer /DOutputDir=dist packaging\windows\eye_timer.iss
 ```
 
 ### macOS
@@ -194,21 +194,25 @@ Settings to keep in GitHub:
 - Review changes under `.github/` in pull requests as carefully as code: the
   workflow decides what gets built and published.
 
-To publish a release:
+To publish a release, with exactly one build:
 
-1. Add a `## [X.Y.Z] - YYYY-MM-DD` section to [CHANGELOG.md](CHANGELOG.md).
-2. Set `project(EyeTimer VERSION X.Y.Z)` in `CMakeLists.txt`.
-3. Merge to `main`, then tag that commit and push the tag:
+1. In the pull request that ships the last change of the release, also rename
+   `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md) to
+   `## [X.Y.Z] - YYYY-MM-DD` and set `project(EyeTimer VERSION X.Y.Z)` in
+   `CMakeLists.txt`. The version is compiled into the app and installers, so a
+   bump in a pull request of its own costs a whole extra build.
+2. Merge it once **Tested** passes. The push to `main` reuses its build.
+3. Tag the merge commit and push the tag:
 
    ```bash
    git tag vX.Y.Z
    git push origin vX.Y.Z
    ```
 
-CI checks that the tag matches the version and the changelog, then publishes a
-GitHub release with the installers, `SHA256SUMS.txt`, and the changelog
-section as release notes. Running copies of Eye Timer pick it up at their next
-daily update check.
+CI checks that the tag matches the version and the changelog, then publishes
+the pull request's installers, `SHA256SUMS.txt`, and the changelog section as
+a GitHub release, without building again. Running copies of Eye Timer pick it
+up at their next daily update check.
 
 ## Fonts
 
