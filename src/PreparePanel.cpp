@@ -28,6 +28,8 @@ PreparePanel::PreparePanel(EyeTimerApp *app, QScreen *screen)
     setWindowTitle(QStringLiteral("Eye Timer break soon"));
     setWindowFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::WindowDoesNotAcceptFocus | Qt::Tool);
     setAttribute(Qt::WA_ShowWithoutActivating);
+    // macOS hides Qt::Tool windows whenever the app loses focus; keep it up.
+    setAttribute(Qt::WA_MacAlwaysShowToolWindow);
     setAttribute(Qt::WA_TranslucentBackground);
 
     auto *layout = new QVBoxLayout(this);

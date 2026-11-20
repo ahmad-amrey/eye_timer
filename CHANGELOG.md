@@ -8,6 +8,12 @@ To release, add a `## [X.Y.Z] - YYYY-MM-DD` section, set the same version in
 `project(EyeTimer VERSION X.Y.Z)` in `CMakeLists.txt`, and push a `vX.Y.Z` tag
 on `main`. The section becomes the release notes.
 
+## [Unreleased]
+
+### Fixed
+- macOS: the countdown pill, the "Break soon" panel and the rest overlay no
+  longer disappear as soon as you click into another app.
+
 ## [0.10.1] - 2026-11-21
 
 Fixes for update checks and starting with Windows after installing.

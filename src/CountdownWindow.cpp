@@ -43,6 +43,8 @@ CountdownWindow::CountdownWindow(EyeTimerApp *app)
     const Qt::WindowType kind = app->trayAvailable() ? Qt::Tool : Qt::Window;
 #endif
     setWindowFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | kind);
+    // macOS hides Qt::Tool windows whenever the app loses focus; keep it up.
+    setAttribute(Qt::WA_MacAlwaysShowToolWindow);
     setAttribute(Qt::WA_TranslucentBackground);
     setMouseTracking(true);
 
