@@ -9,6 +9,8 @@
 #include <QTemporaryDir>
 #include <QTest>
 
+#include <memory>
+
 Q_DECLARE_METATYPE(ReleaseInfo)
 
 // Minimal HTTP server standing in for api.github.com and github.com: each
@@ -21,11 +23,17 @@ public:
     {
         connect(&m_server, &QTcpServer::newConnection, this, [this] {
             while (QTcpSocket *socket = m_server.nextPendingConnection()) {
-                connect(socket, &QTcpSocket::readyRead, socket, [this, socket] {
-                    m_buffer[socket] += socket->readAll();
-                    if (!m_buffer[socket].contains("\r\n\r\n"))
+                // Each connection owns its buffer: keying a shared table by the
+                // socket pointer let a new connection that reused a freed
+                // address inherit an old request, which made the test flaky.
+                auto request = std::make_shared<QByteArray>();
+                auto answered = std::make_shared<bool>(false);
+                connect(socket, &QTcpSocket::readyRead, socket, [this, socket, request, answered] {
+                    *request += socket->readAll();
+                    if (*answered || !request->contains("\r\n\r\n"))
                         return;
-                    const QList<QByteArray> requestLine = m_buffer[socket].left(m_buffer[socket].indexOf("\r\n")).split(' ');
+                    *answered = true;
+                    const QList<QByteArray> requestLine = request->left(request->indexOf("\r\n")).split(' ');
                     const QByteArray key = requestLine.value(0) + ' ' + requestLine.value(1);
                     socket->write(m_routes.value(key, "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"));
                     socket->disconnectFromHost();
@@ -44,7 +52,6 @@ public:
 private:
     QTcpServer m_server;
     QHash<QByteArray, QByteArray> m_routes;
-    QHash<QTcpSocket *, QByteArray> m_buffer;
 };
 
 namespace {
