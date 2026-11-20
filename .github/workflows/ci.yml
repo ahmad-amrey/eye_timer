@@ -65,6 +65,15 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Version $version"
 
+          # The changelog and the version move together: its newest version
+          # section must be this version (only [Unreleased] may sit above it).
+          # A section the version doesn't announce would never be released.
+          newest=$(sed -n 's/^## \[\([0-9][0-9.]*\)\].*/\1/p' CHANGELOG.md | head -1)
+          if [ "$newest" != "$version" ]; then
+            echo "::error file=CHANGELOG.md::the newest changelog section is [${newest:-none}] but CMakeLists.txt says $version. Raise the version to match, or keep the entries under [Unreleased]."
+            exit 1
+          fi
+
           # Published versions are the vX.Y.Z tags.
           tags=$(git ls-remote --tags --refs origin 'v*' | sed 's#.*refs/tags/v##' | grep -E '^[0-9]+(\.[0-9]+)*$' || true)
           latest=$(printf '%s\n' "$tags" | sed '/^$/d' | sort -V | tail -1)
