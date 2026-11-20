@@ -174,8 +174,9 @@ What protects users from a tampered build:
   that tree, so reused installers always come from the same reviewed
   workflow. A fork's pull request, or a branch whose workflow was changed,
   can never supply them.
-- **Only tags publish**, only for a commit on `main`, and only after the tag
-  matches the version and changelog. The release job is the only one with
+- **Only `main` publishes**: a new version merged into `main`, or a tag on a
+  commit of `main`, and only with a changelog section and a version above the
+  latest release. The release job is the only one with
   write access. Pull requests from forks get a read-only token, and the
   workflow uses no secrets.
 - **Actions are pinned to full commit SHAs**, so a moved tag in a third-party
@@ -194,25 +195,26 @@ Settings to keep in GitHub:
 - Review changes under `.github/` in pull requests as carefully as code: the
   workflow decides what gets built and published.
 
-To publish a release, with exactly one build:
+Releases follow the version in `CMakeLists.txt`, with exactly one build:
 
 1. In the pull request that ships the last change of the release, also rename
    `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md) to
    `## [X.Y.Z] - YYYY-MM-DD` and set `project(EyeTimer VERSION X.Y.Z)` in
    `CMakeLists.txt`. The version is compiled into the app and installers, so a
    bump in a pull request of its own costs a whole extra build.
-2. Merge it once **Tested** passes. The push to `main` reuses its build.
-3. Tag the merge commit and push the tag:
+2. CI checks that the new version is higher than the latest release and has a
+   changelog section; otherwise **Tested** fails and the merge stays blocked.
+   The run shows "Merging this pull request publishes Eye Timer X.Y.Z".
+3. Merge it. The push to `main` reuses the pull request's build, creates the
+   `vX.Y.Z` tag on the merge commit, and publishes the installers,
+   `SHA256SUMS.txt` and the changelog section as a GitHub release, without
+   building again.
 
-   ```bash
-   git tag vX.Y.Z
-   git push origin vX.Y.Z
-   ```
-
-CI checks that the tag matches the version and the changelog, then publishes
-the pull request's installers, `SHA256SUMS.txt`, and the changelog section as
-a GitHub release, without building again. Running copies of Eye Timer pick it
-up at their next daily update check.
+Running copies of Eye Timer pick the release up at their next daily update
+check. Pushing a `vX.Y.Z` tag by hand on a commit of `main` still publishes
+too; CI then checks that the tag matches the version. If you later add a tag
+ruleset for `v*`, put GitHub Actions on its bypass list, or CI can't create
+release tags.
 
 ## Fonts
 
