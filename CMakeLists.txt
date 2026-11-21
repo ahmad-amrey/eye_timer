@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(EyeTimer VERSION 0.10.3 DESCRIPTION "Eye-rest reminder" LANGUAGES CXX)
+project(EyeTimer VERSION 0.11.0 DESCRIPTION "Eye-rest reminder" LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

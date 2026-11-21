@@ -11,6 +11,19 @@ X.Y.Z)` in `CMakeLists.txt`. Merging it publishes the release: CI tags the
 merge commit and releases the pull request's build without building again, and
 the section becomes the release notes.
 
+## [0.11.0] - 2026-11-21
+
+Snooze, and a steady "Break soon" countdown.
+
+### Added
+- "Snooze 3 min" on the "Break soon" panel moves the break a few minutes
+  later. The length can be changed under Settings → Rhythm → Snooze.
+
+### Fixed
+- The "Break soon" panel no longer flickers when you are away from the
+  computer during its countdown. Once the countdown has started it runs to the
+  break whether or not you are there.
+
 ## [0.10.3] - 2026-11-21
 
 Updates download the right installer directly.
