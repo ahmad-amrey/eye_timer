@@ -20,4 +20,7 @@ bool inNotice(double activeSeconds, const AppConfig &config);
 // countdown always runs to the break, whether or not anyone is at the computer.
 Idle idleEffect(double activeSeconds, double idleSeconds, const AppConfig &config);
 
+// Active seconds after "Snooze": the break moves to `snoozeMinutes` from now.
+double snoozedActiveSeconds(const AppConfig &config);
+
 } // namespace schedule

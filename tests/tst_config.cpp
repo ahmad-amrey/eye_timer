@@ -40,6 +40,7 @@ private slots:
         config.prepareNoticeSeconds = 0;
         config.idlePauseAfterSeconds = 120;
         config.idleResetAfterSeconds = 900;
+        config.snoozeMinutes = 10;
         config.overlayAlpha = 0.5;
         config.preparePanelAlpha = 0.75;
         config.countdownAlpha = 0.25;
@@ -109,7 +110,8 @@ private slots:
         AppConfig config;
         config.restDurationSeconds = 0;
         config.healthySuggestions.clear();
-        QCOMPARE(validateConfig(config).size(), 2);
+        config.snoozeMinutes = 0;
+        QCOMPARE(validateConfig(config).size(), 3);
     }
 
 private:

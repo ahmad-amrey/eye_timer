@@ -60,6 +60,7 @@ private:
     Stepper *m_workMinutes = nullptr;
     Stepper *m_restSeconds = nullptr;
     Stepper *m_noticeSeconds = nullptr;
+    Stepper *m_snoozeMinutes = nullptr;
     Stepper *m_idlePauseMinutes = nullptr;
     Stepper *m_idleRestMinutes = nullptr;
     IdleTimeline *m_timeline = nullptr;

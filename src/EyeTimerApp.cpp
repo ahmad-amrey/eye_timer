@@ -397,6 +397,18 @@ void EyeTimerApp::dismissPreparePanel()
     hidePreparePanel();
 }
 
+void EyeTimerApp::snoozeBreak()
+{
+    if (m_breakStartedMs)
+        return;
+    // Push the break back to `snoozeMinutes` of active time from now. The
+    // notice comes back when that runs down to the notice window again.
+    m_activeSeconds = qMin(m_activeSeconds, schedule::snoozedActiveSeconds(m_config));
+    m_prepareDismissed = false;
+    hidePreparePanel();
+    updateStatus();
+}
+
 // ------------------------------------------------------------------ sound
 
 QString EyeTimerApp::tonePath(const QString &event)

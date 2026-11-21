@@ -1,5 +1,7 @@
 #include "Schedule.h"
 
+#include <QtGlobal>
+
 namespace schedule {
 
 bool inNotice(double activeSeconds, const AppConfig &config)
@@ -16,6 +18,11 @@ Idle idleEffect(double activeSeconds, double idleSeconds, const AppConfig &confi
     if (idleSeconds >= config.idlePauseAfterSeconds)
         return Idle::Paused;
     return Idle::Counting;
+}
+
+double snoozedActiveSeconds(const AppConfig &config)
+{
+    return qMax(0.0, double(config.restIntervalSeconds) - config.snoozeMinutes * 60.0);
 }
 
 } // namespace schedule

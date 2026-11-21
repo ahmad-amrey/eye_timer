@@ -16,6 +16,7 @@ private:
         config.prepareNoticeSeconds = 20;
         config.idlePauseAfterSeconds = 60;
         config.idleResetAfterSeconds = 10 * 60;
+        config.snoozeMinutes = 3;
         return config;
     }
 
@@ -73,6 +74,20 @@ private slots:
             ++ticks;
         }
         QCOMPARE(ticks, c.prepareNoticeSeconds);
+    }
+
+    void snoozeMovesTheBreakLater()
+    {
+        AppConfig c = config();
+        QCOMPARE(c.restIntervalSeconds - schedule::snoozedActiveSeconds(c), 180.0);
+        QVERIFY(!schedule::inNotice(schedule::snoozedActiveSeconds(c), c));
+
+        c.snoozeMinutes = 10;
+        QCOMPARE(c.restIntervalSeconds - schedule::snoozedActiveSeconds(c), 600.0);
+
+        // Longer than the whole interval: start the interval over.
+        c.snoozeMinutes = 30;
+        QCOMPARE(schedule::snoozedActiveSeconds(c), 0.0);
     }
 };
 

@@ -287,6 +287,7 @@ QWidget *SettingsWindow::buildRhythmPage()
     m_workMinutes = new Stepper(1, 480, 1, QStringLiteral("min"));
     m_restSeconds = new Stepper(5, 600, 5, QStringLiteral("sec"));
     m_noticeSeconds = new Stepper(0, 600, 5, QStringLiteral("sec"));
+    m_snoozeMinutes = new Stepper(1, 60, 1, QStringLiteral("min"));
     layout->addWidget(makeRow(QStringLiteral("Work interval"),
                               QStringLiteral("Active computer time before the rest overlay appears."), m_workMinutes));
     layout->addWidget(makeRow(QStringLiteral("Rest duration"),
@@ -294,9 +295,12 @@ QWidget *SettingsWindow::buildRhythmPage()
     layout->addWidget(makeRow(QStringLiteral("Pre-break notice"),
                               QStringLiteral("How early the small warning panel appears. 0 turns it off."),
                               m_noticeSeconds));
+    layout->addWidget(makeRow(QStringLiteral("Snooze"),
+                              QStringLiteral("How much later Snooze on the warning panel moves the break."),
+                              m_snoozeMinutes));
     layout->addStretch(1);
 
-    for (Stepper *stepper : {m_workMinutes, m_restSeconds, m_noticeSeconds})
+    for (Stepper *stepper : {m_workMinutes, m_restSeconds, m_noticeSeconds, m_snoozeMinutes})
         connect(stepper, &Stepper::valueChanged, this, &SettingsWindow::formChanged);
     return page;
 }
@@ -534,6 +538,7 @@ AppConfig SettingsWindow::currentFormConfig() const
     config.restIntervalSeconds = m_workMinutes->value() * 60;
     config.restDurationSeconds = m_restSeconds->value();
     config.prepareNoticeSeconds = m_noticeSeconds->value();
+    config.snoozeMinutes = m_snoozeMinutes->value();
     config.idlePauseAfterSeconds = m_idlePauseMinutes->value() * 60;
     config.idleResetAfterSeconds = m_idleRestMinutes->value() * 60;
     config.overlayAlpha = m_overlayOpacity->value() / 100.0;
@@ -556,6 +561,7 @@ void SettingsWindow::loadFromConfig()
     m_workMinutes->setValue(qMax(1, qRound(config.restIntervalSeconds / 60.0)));
     m_restSeconds->setValue(config.restDurationSeconds);
     m_noticeSeconds->setValue(config.prepareNoticeSeconds);
+    m_snoozeMinutes->setValue(config.snoozeMinutes);
     m_idlePauseMinutes->setValue(qMax(0, qRound(config.idlePauseAfterSeconds / 60.0)));
     m_idleRestMinutes->setMinimum(qMax(1, m_idlePauseMinutes->value()));
     m_idleRestMinutes->setValue(qMax(1, qRound(config.idleResetAfterSeconds / 60.0)));
