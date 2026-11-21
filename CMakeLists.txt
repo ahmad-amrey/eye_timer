@@ -31,6 +31,8 @@ qt_add_library(eyetimer_core STATIC
     src/IdleDetector.h
     src/Platform.cpp
     src/Platform.h
+    src/Schedule.cpp
+    src/Schedule.h
     src/SoundPlayer.cpp
     src/SoundPlayer.h
     src/UpdateChecker.cpp
