@@ -17,6 +17,7 @@ constexpr auto kRestDuration = "rest_duration_seconds";
 constexpr auto kPrepareNotice = "prepare_notice_seconds";
 constexpr auto kIdlePause = "idle_pause_after_seconds";
 constexpr auto kIdleReset = "idle_reset_after_seconds";
+constexpr auto kSnooze = "snooze_minutes";
 constexpr auto kOverlayAlpha = "overlay_alpha";
 constexpr auto kPrepareAlpha = "prepare_panel_alpha";
 constexpr auto kCountdownAlpha = "countdown_alpha";
@@ -61,6 +62,8 @@ QStringList validateConfig(const AppConfig &config)
         errors << QStringLiteral("prepare_notice_seconds cannot be negative");
     if (config.idlePauseAfterSeconds < 0)
         errors << QStringLiteral("idle_pause_after_seconds cannot be negative");
+    if (config.snoozeMinutes < 1)
+        errors << QStringLiteral("snooze_minutes must be at least 1");
     if (config.overlayAlpha < 0.0 || config.overlayAlpha > 1.0)
         errors << QStringLiteral("overlay_alpha must be between 0.0 and 1.0");
     if (config.preparePanelAlpha < 0.0 || config.preparePanelAlpha > 1.0)
@@ -99,6 +102,7 @@ AppConfig loadSavedConfig(const AppConfig &defaults)
     readInt(data, kPrepareNotice, config.prepareNoticeSeconds);
     readInt(data, kIdlePause, config.idlePauseAfterSeconds);
     readInt(data, kIdleReset, config.idleResetAfterSeconds);
+    readInt(data, kSnooze, config.snoozeMinutes);
     readDouble(data, kOverlayAlpha, config.overlayAlpha);
     readDouble(data, kPrepareAlpha, config.preparePanelAlpha);
     readDouble(data, kCountdownAlpha, config.countdownAlpha);
@@ -142,6 +146,7 @@ bool saveConfig(const AppConfig &config, QString *savedPath, QString *error)
     data.insert(QLatin1String(kPrepareNotice), config.prepareNoticeSeconds);
     data.insert(QLatin1String(kIdlePause), config.idlePauseAfterSeconds);
     data.insert(QLatin1String(kIdleReset), config.idleResetAfterSeconds);
+    data.insert(QLatin1String(kSnooze), config.snoozeMinutes);
     data.insert(QLatin1String(kOverlayAlpha), config.overlayAlpha);
     data.insert(QLatin1String(kPrepareAlpha), config.preparePanelAlpha);
     data.insert(QLatin1String(kCountdownAlpha), config.countdownAlpha);

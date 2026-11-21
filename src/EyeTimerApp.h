@@ -78,6 +78,7 @@ public slots:
     void showCountdownWindow();
     void hideCountdownWindow();
     void dismissPreparePanel();
+    void snoozeBreak();
     void checkForUpdatesNow();
     void showUpdateDialog();
     void stop();

@@ -5,6 +5,7 @@
 #include "CountdownWindow.h"
 #include "Platform.h"
 #include "PreparePanel.h"
+#include "Schedule.h"
 #include "SettingsWindow.h"
 #include "UpdateDialog.h"
 #include "Widgets.h"
@@ -140,10 +141,10 @@ EyeTimerApp::Phase EyeTimerApp::phase() const
 {
     if (m_breakStartedMs)
         return Phase::Break;
-    if (m_lastIdleSeconds >= m_config.idlePauseAfterSeconds)
-        return Phase::Paused;
-    if (secondsUntilBreak() <= m_config.prepareNoticeSeconds)
+    if (schedule::inNotice(m_activeSeconds, m_config))
         return Phase::Soon;
+    if (schedule::idleEffect(m_activeSeconds, m_lastIdleSeconds, m_config) != schedule::Idle::Counting)
+        return Phase::Paused;
     return Phase::Counting;
 }
 
@@ -237,18 +238,22 @@ bool EyeTimerApp::isResumeGap(double wallElapsed) const
 
 void EyeTimerApp::updateWorkTimer(double elapsed, double idleSeconds)
 {
-    if (idleSeconds >= m_config.idleResetAfterSeconds) {
+    // Once the pre-break notice is up, idle time no longer pauses or resets
+    // the countdown: it runs to the break whether or not you are there.
+    switch (schedule::idleEffect(m_activeSeconds, idleSeconds, m_config)) {
+    case schedule::Idle::Reset:
         m_activeSeconds = 0.0;
         m_prepareDismissed = false;
         hidePreparePanel();
         return;
-    }
-
-    if (idleSeconds < m_config.idlePauseAfterSeconds) {
-        m_activeSeconds += elapsed;
-    } else {
+    case schedule::Idle::Paused:
+        // Paused only happens before the notice, so there is no panel to keep.
         m_prepareDismissed = false;
         hidePreparePanel();
+        return;
+    case schedule::Idle::Counting:
+        m_activeSeconds += elapsed;
+        break;
     }
 
     const double untilBreak = m_config.restIntervalSeconds - m_activeSeconds;
@@ -390,6 +395,18 @@ void EyeTimerApp::dismissPreparePanel()
 {
     m_prepareDismissed = true;
     hidePreparePanel();
+}
+
+void EyeTimerApp::snoozeBreak()
+{
+    if (m_breakStartedMs)
+        return;
+    // Push the break back to `snoozeMinutes` of active time from now. The
+    // notice comes back when that runs down to the notice window again.
+    m_activeSeconds = qMin(m_activeSeconds, schedule::snoozedActiveSeconds(m_config));
+    m_prepareDismissed = false;
+    hidePreparePanel();
+    updateStatus();
 }
 
 // ------------------------------------------------------------------ sound

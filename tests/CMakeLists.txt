@@ -6,6 +6,7 @@ endfunction()
 
 eyetimer_add_test(tst_version)
 eyetimer_add_test(tst_config)
+eyetimer_add_test(tst_schedule)
 eyetimer_add_test(tst_updatechecker)
 eyetimer_add_test(tst_autostart)
 

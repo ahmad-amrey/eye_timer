@@ -9,6 +9,7 @@ struct AppConfig {
     int prepareNoticeSeconds = 20;
     int idlePauseAfterSeconds = 60;
     int idleResetAfterSeconds = 10 * 60;
+    int snoozeMinutes = 3;
     int tickMs = 1000;
     double overlayAlpha = 0.86;
     double preparePanelAlpha = 0.96;

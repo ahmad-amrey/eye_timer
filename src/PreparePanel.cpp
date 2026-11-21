@@ -76,17 +76,24 @@ PreparePanel::PreparePanel(EyeTimerApp *app, QScreen *screen)
     startNow->setObjectName(QStringLiteral("primaryButton"));
     startNow->setCursor(Qt::PointingHandCursor);
     startNow->setFocusPolicy(Qt::NoFocus);
+    auto *snooze = new QPushButton(QStringLiteral("Snooze %1 min").arg(app->config().snoozeMinutes), this);
+    snooze->setObjectName(QStringLiteral("secondaryButton"));
+    snooze->setCursor(Qt::PointingHandCursor);
+    snooze->setFocusPolicy(Qt::NoFocus);
+    snooze->setToolTip(QStringLiteral("Move the break %1 minutes later").arg(app->config().snoozeMinutes));
     auto *hide = new QPushButton(QStringLiteral("Hide"), this);
     hide->setObjectName(QStringLiteral("secondaryButton"));
     hide->setCursor(Qt::PointingHandCursor);
     hide->setFocusPolicy(Qt::NoFocus);
     buttons->addWidget(startNow, 1);
+    buttons->addWidget(snooze, 1);
     buttons->addWidget(hide, 1);
     layout->addLayout(buttons);
 
     connect(close, &IconButton::clicked, app, &EyeTimerApp::dismissPreparePanel);
     connect(hide, &QPushButton::clicked, app, &EyeTimerApp::dismissPreparePanel);
     connect(startNow, &QPushButton::clicked, app, &EyeTimerApp::startBreak);
+    connect(snooze, &QPushButton::clicked, app, &EyeTimerApp::snoozeBreak);
 
     const int available = screen ? screen->availableGeometry().width() : 1280;
     setFixedWidth(qMin(420, qMax(280, available - 2 * kScreenMargin)));
