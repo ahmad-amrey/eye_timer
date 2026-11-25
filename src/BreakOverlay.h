@@ -2,6 +2,7 @@
 
 #include <QElapsedTimer>
 #include <QTimer>
+#include <QVariantAnimation>
 #include <QWidget>
 
 class EyeTimerApp;
@@ -18,22 +19,30 @@ public:
 
     void setRemaining(int seconds);
     void setAnimated(bool animated);
+    // Shakes the skip button: the key just pressed was held back, Esc leaves.
+    void shakeSkipButton();
+    bool isShakingSkipButton() const;
 
 protected:
     void paintEvent(QPaintEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
+    bool event(QEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
+    void keyReleaseEvent(QKeyEvent *event) override;
+    void closeEvent(QCloseEvent *event) override;
     void showEvent(QShowEvent *event) override;
 
 private:
     qreal scale() const;
     void paintBackground(QPainter &painter, qreal seconds);
+    void placeSkipButton();
 
     EyeTimerApp *m_app;
     QString m_suggestion;
     int m_breakNumber;
     int m_remaining = 0;
     KeyHintButton *m_skip;
+    QVariantAnimation m_shake;
     QTimer m_frameTimer;
     QElapsedTimer m_clock;
 };

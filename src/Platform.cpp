@@ -1,10 +1,13 @@
 #include "Platform.h"
 
 #include <QCoreApplication>
+#include <QGuiApplication>
 #include <QDir>
 #include <QFileInfo>
 #include <QProcess>
 #include <QStandardPaths>
+#include <QWidget>
+#include <QWindow>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -85,6 +88,57 @@ QString startupMomentName()
 void keepFloatingEverywhere(QWidget *widget)
 {
     Q_UNUSED(widget);
+}
+#endif
+
+#ifndef Q_OS_MACOS
+void takeKeyboardFocus(QWidget *widget)
+{
+    if (!widget || !widget->isVisible())
+        return;
+#if defined(Q_OS_WIN)
+    const auto window = reinterpret_cast<HWND>(widget->winId());
+    const HWND foreground = GetForegroundWindow();
+    if (foreground != window) {
+        // SetForegroundWindow() from a background process only flashes the
+        // taskbar. Sharing the foreground thread's input state for a moment
+        // lets it through, the same way Qt's AlwaysActivateWindow does.
+        const DWORD ownThread = GetCurrentThreadId();
+        const DWORD foregroundThread = foreground ? GetWindowThreadProcessId(foreground, nullptr) : 0;
+        const bool attached = foregroundThread && foregroundThread != ownThread
+                              && AttachThreadInput(ownThread, foregroundThread, TRUE);
+        BringWindowToTop(window);
+        SetForegroundWindow(window);
+        SetActiveWindow(window);
+        SetFocus(window);
+        if (attached)
+            AttachThreadInput(ownThread, foregroundThread, FALSE);
+    }
+#endif
+    if (!widget->isActiveWindow())
+        widget->activateWindow();
+    widget->setFocus(Qt::ActiveWindowFocusReason);
+#if defined(Q_OS_LINUX)
+    // The window manager may keep focus on another window; an active grab
+    // sends every key to this window regardless. It only succeeds once the
+    // window is viewable, hence the repeated calls.
+    if (QGuiApplication::platformName() == QLatin1String("xcb")) {
+        if (QWindow *window = widget->windowHandle())
+            window->setKeyboardGrabEnabled(true);
+    }
+#endif
+}
+
+void releaseKeyboardFocus(QWidget *widget)
+{
+#if defined(Q_OS_LINUX)
+    if (widget && QGuiApplication::platformName() == QLatin1String("xcb")) {
+        if (QWindow *window = widget->windowHandle())
+            window->setKeyboardGrabEnabled(false);
+    }
+#else
+    Q_UNUSED(widget);
+#endif
 }
 #endif
 

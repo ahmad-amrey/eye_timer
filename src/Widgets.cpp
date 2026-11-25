@@ -102,6 +102,15 @@ void KeyHintButton::setScale(qreal scale)
     update();
 }
 
+void KeyHintButton::setHintEmphasis(qreal emphasis)
+{
+    emphasis = qBound(0.0, emphasis, 1.0);
+    if (qFuzzyCompare(1.0 + m_hintEmphasis, 1.0 + emphasis))
+        return;
+    m_hintEmphasis = emphasis;
+    update();
+}
+
 QSize KeyHintButton::sizeHint() const
 {
     const QFontMetricsF labelMetrics(theme::font(15 * m_scale, QFont::Normal));
@@ -130,7 +139,7 @@ void KeyHintButton::paintEvent(QPaintEvent *)
     painter.drawText(QRectF(x, 0, labelWidth + 2, height()), Qt::AlignVCenter | Qt::AlignLeft, text());
     x += labelWidth + 12 * m_scale;
     painter.setFont(hintFont);
-    painter.setPen(theme::text(0.5));
+    painter.setPen(theme::text(0.5 + 0.42 * m_hintEmphasis));
     painter.drawText(QRectF(x, 0, width() - x, height()), Qt::AlignVCenter | Qt::AlignLeft, m_hint);
 }
 

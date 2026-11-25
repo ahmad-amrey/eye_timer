@@ -10,6 +10,10 @@ eyetimer_add_test(tst_schedule)
 eyetimer_add_test(tst_updatechecker)
 eyetimer_add_test(tst_autostart)
 
+# Drives the rest overlay with simulated keys (offscreen in CI).
+eyetimer_add_test(tst_breakoverlay)
+target_link_libraries(tst_breakoverlay PRIVATE eyetimer_ui)
+
 if(WIN32)
     # Decodes the embedded tones exactly as the app does before playing them.
     eyetimer_add_test(tst_sound)

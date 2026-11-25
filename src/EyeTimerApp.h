@@ -52,6 +52,7 @@ public:
 
     Phase phase() const;
     int secondsUntilBreak() const;
+    bool isOnBreak() const { return m_breakStartedMs.has_value(); }
     int breakRemainingSeconds() const;
     qreal breakRemainingFraction() const; // 1.0 at the start of a break, 0.0 at its end
     qreal workProgress() const;           // 0.0 right after a break, 1.0 when the next one starts
@@ -72,6 +73,9 @@ public slots:
     void startBreak();
     void finishBreak(bool skipped);
     void skipBreak() { finishBreak(true); }
+    // A key other than Esc was pressed during a break: shake every screen's
+    // skip button to show that keys are held back and how to leave.
+    void remindHowToSkip();
     void resetWorkTimer();
     void showSettingsWindow();
     void toggleCountdownWindow();
@@ -92,6 +96,7 @@ private:
     void showOrUpdatePreparePanel(int secondsUntilBreak);
     void hidePreparePanel();
     void closeOverlays();
+    void claimKeyboard();
     void playTone(const QString &event);
 
     void maybeCheckForUpdates();
@@ -125,6 +130,7 @@ private:
     bool m_trayAvailable = false;
 
     QList<QPointer<BreakOverlay>> m_overlays;
+    QTimer m_keyboardTimer; // takes the keyboard back while a break is shown
     QPointer<PreparePanel> m_preparePanel;
     CountdownWindow *m_countdown = nullptr;
     QPointer<SettingsWindow> m_settings;

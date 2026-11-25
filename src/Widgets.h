@@ -46,6 +46,8 @@ public:
     KeyHintButton(const QString &label, const QString &hint, QWidget *parent = nullptr);
 
     void setScale(qreal scale);
+    // 0 draws the hint muted, 1 as bright as the label.
+    void setHintEmphasis(qreal emphasis);
     QSize sizeHint() const override;
 
 protected:
@@ -56,6 +58,7 @@ protected:
 private:
     QString m_hint;
     qreal m_scale = 1.0;
+    qreal m_hintEmphasis = 0.0;
     bool m_hovered = false;
 };
 

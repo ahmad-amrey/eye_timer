@@ -36,7 +36,9 @@ The builds are not code-signed yet, so the first launch shows a warning:
 - Floating always-on-top countdown that you can drag anywhere. Hover it to take
   a break now or hide it; it turns amber in the final minute.
 - Full-screen rest overlay on every screen, with a ring countdown and a healthy
-  suggestion. Skip with the `Skip break` button, `Esc`, or `Space`.
+  suggestion. It takes the keyboard, so text you were typing when the break
+  began never lands in your app: other keys only shake the `Skip break`
+  button. Skip with that button or `Esc`.
 - Pre-break notice in the corner of the screen, shown without taking focus,
   with `Start break now` and `Hide`.
 - Idle detection: counting pauses while you are away, and a long absence counts
