@@ -5,6 +5,7 @@
 #include "Theme.h"
 #include "Widgets.h"
 
+#include <QCloseEvent>
 #include <QKeyEvent>
 #include <QPainter>
 #include <QRadialGradient>
@@ -20,6 +21,10 @@ constexpr qreal kDesignHeight = 900.0;
 // ~15 fps is plenty for fields that drift a few pixels per second, and keeps
 // full-screen translucent repaints cheap.
 constexpr int kFrameMs = 66;
+// A short side-to-side shake that settles, like a refused password field.
+constexpr int kShakeMs = 450;
+constexpr qreal kShakeCycles = 4.0;
+constexpr qreal kShakeAmplitude = 9.0; // design pixels
 
 struct Drift {
     QRectF rect; // in design coordinates
@@ -50,7 +55,16 @@ BreakOverlay::BreakOverlay(EyeTimerApp *app, QScreen *screen, const QString &sug
     platform::keepFloatingEverywhere(this);
     setGeometry(screen->geometry());
 
+    // The overlay itself keeps the keyboard: a focused button would take
+    // Space or Enter as a click, and only Esc may end the break.
+    m_skip->setFocusPolicy(Qt::NoFocus);
     connect(m_skip, &KeyHintButton::clicked, app, &EyeTimerApp::skipBreak);
+
+    m_shake.setDuration(kShakeMs);
+    m_shake.setStartValue(0.0);
+    m_shake.setEndValue(1.0);
+    connect(&m_shake, &QVariantAnimation::valueChanged, this, &BreakOverlay::placeSkipButton);
+    connect(&m_shake, &QVariantAnimation::finished, this, &BreakOverlay::placeSkipButton);
     connect(&m_frameTimer, &QTimer::timeout, this, qOverload<>(&QWidget::update));
     m_clock.start();
 }
@@ -86,18 +100,79 @@ void BreakOverlay::showEvent(QShowEvent *event)
 void BreakOverlay::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
+    m_skip->setScale(scale());
+    placeSkipButton();
+}
+
+void BreakOverlay::placeSkipButton()
+{
     const qreal s = scale();
-    m_skip->setScale(s);
-    m_skip->move((width() - m_skip->width()) / 2, height() - qRound(56 * s) - m_skip->height());
+    qreal offset = 0.0;
+    qreal emphasis = 0.0;
+    if (m_shake.state() == QAbstractAnimation::Running) {
+        const qreal t = m_shake.currentValue().toReal();
+        offset = kShakeAmplitude * s * std::sin(2.0 * std::numbers::pi * kShakeCycles * t) * (1.0 - t);
+        emphasis = 1.0 - t;
+    }
+    m_skip->setHintEmphasis(emphasis);
+    m_skip->move((width() - m_skip->width()) / 2 + qRound(offset), height() - qRound(56 * s) - m_skip->height());
+}
+
+void BreakOverlay::shakeSkipButton()
+{
+    // Restarting a running shake would only make it jitter while a key repeats.
+    if (m_shake.state() != QAbstractAnimation::Running)
+        m_shake.start();
+}
+
+bool BreakOverlay::isShakingSkipButton() const
+{
+    return m_shake.state() == QAbstractAnimation::Running;
+}
+
+bool BreakOverlay::event(QEvent *event)
+{
+    switch (event->type()) {
+    case QEvent::ShortcutOverride:
+        // No application shortcut fires during a break; the key comes here.
+        event->accept();
+        return true;
+    case QEvent::KeyPress:
+        // Straight to keyPressEvent, before QWidget turns Tab into focus moves.
+        keyPressEvent(static_cast<QKeyEvent *>(event));
+        return true;
+    default:
+        return QWidget::event(event);
+    }
 }
 
 void BreakOverlay::keyPressEvent(QKeyEvent *event)
 {
-    if (event->key() == Qt::Key_Escape || event->key() == Qt::Key_Space) {
-        m_app->finishBreak(true);
+    event->accept();
+    if (event->key() == Qt::Key_Escape) {
+        m_app->skipBreak();
         return;
     }
-    QWidget::keyPressEvent(event);
+    // Every other key is swallowed, so text typed when the break began never
+    // lands in the app underneath. The shake says so, and points at Esc.
+    m_app->remindHowToSkip();
+}
+
+void BreakOverlay::keyReleaseEvent(QKeyEvent *event)
+{
+    event->accept();
+}
+
+void BreakOverlay::closeEvent(QCloseEvent *event)
+{
+    // Alt+F4 or the window manager's close button would leave the break
+    // running with this screen uncovered. Only the app closes the overlay.
+    if (event->spontaneous()) {
+        event->ignore();
+        m_app->remindHowToSkip();
+        return;
+    }
+    QWidget::closeEvent(event);
 }
 
 void BreakOverlay::paintBackground(QPainter &painter, qreal seconds)

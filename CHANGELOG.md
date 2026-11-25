@@ -11,6 +11,21 @@ X.Y.Z)` in `CMakeLists.txt`. Merging it publishes the release: CI tags the
 merge commit and releases the pull request's build without building again, and
 the section becomes the release notes.
 
+## [Unreleased]
+
+### Fixed
+- `Esc` skips the break again when another app had the keyboard as the break
+  began. The rest overlay now takes the keyboard on Windows, macOS and Linux,
+  and takes it back if another window grabs it, so keys you type during a
+  break no longer reach the app underneath.
+- Alt+F4 or the window manager's close no longer closes the rest overlay on
+  one screen while the break carries on.
+
+### Changed
+- During a break, keys other than `Esc` shake the `Skip break` button to show
+  that they are held back and how to leave. `Space` no longer skips the break,
+  so typing a sentence when the break starts cannot end it by accident.
+
 ## [0.11.0] - 2026-11-21
 
 Snooze, and a steady "Break soon" countdown.

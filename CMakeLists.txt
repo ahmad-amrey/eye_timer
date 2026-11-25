@@ -70,16 +70,15 @@ elseif(UNIX)
     target_link_libraries(eyetimer_core PUBLIC ${CMAKE_DL_LIBS})
 endif()
 
-# The app: soft light UI, timer logic, tray icon.
-
-set(EYETIMER_UI_SOURCES
+# The app: soft light UI, timer logic, tray icon. A library apart from main()
+# so the tests can drive the windows.
+qt_add_library(eyetimer_ui STATIC
     src/BreakOverlay.cpp
     src/BreakOverlay.h
     src/CountdownWindow.cpp
     src/CountdownWindow.h
     src/EyeTimerApp.cpp
     src/EyeTimerApp.h
-    src/main.cpp
     src/PreparePanel.cpp
     src/PreparePanel.h
     src/SettingsWindow.cpp
@@ -91,10 +90,13 @@ set(EYETIMER_UI_SOURCES
     src/Widgets.cpp
     src/Widgets.h
 )
+target_link_libraries(eyetimer_ui PUBLIC eyetimer_core)
+
+set(EYETIMER_APP_SOURCES src/main.cpp)
 
 if(WIN32)
     configure_file(packaging/windows/eye_timer.rc.in "${CMAKE_CURRENT_BINARY_DIR}/eye_timer.rc" @ONLY)
-    list(APPEND EYETIMER_UI_SOURCES "${CMAKE_CURRENT_BINARY_DIR}/eye_timer.rc")
+    list(APPEND EYETIMER_APP_SOURCES "${CMAKE_CURRENT_BINARY_DIR}/eye_timer.rc")
 elseif(APPLE)
     # Bundle icon, generated from the PNG with the macOS tools.
     set(EYETIMER_ICNS "${CMAKE_CURRENT_BINARY_DIR}/EyeTimer.icns")
@@ -105,12 +107,12 @@ elseif(APPLE)
         DEPENDS "${EYETIMER_ASSET_DIR}/icon.png" packaging/macos/make_icns.cmake
         VERBATIM
     )
-    list(APPEND EYETIMER_UI_SOURCES "${EYETIMER_ICNS}")
+    list(APPEND EYETIMER_APP_SOURCES "${EYETIMER_ICNS}")
     set_source_files_properties("${EYETIMER_ICNS}" PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
 endif()
 
-qt_add_executable(EyeTimer WIN32 MACOSX_BUNDLE ${EYETIMER_UI_SOURCES})
-target_link_libraries(EyeTimer PRIVATE eyetimer_core)
+qt_add_executable(EyeTimer WIN32 MACOSX_BUNDLE ${EYETIMER_APP_SOURCES})
+target_link_libraries(EyeTimer PRIVATE eyetimer_ui)
 target_compile_definitions(EyeTimer PRIVATE EYETIMER_VERSION="${PROJECT_VERSION}")
 
 

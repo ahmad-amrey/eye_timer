@@ -28,6 +28,19 @@ QString startupMomentName();
 // creates the native window. No-op elsewhere.
 void keepFloatingEverywhere(QWidget *widget);
 
+// Makes a full-screen window receive the keyboard while another
+// application is in the foreground, so keystrokes stop reaching that app.
+// activateWindow() alone is not enough: Windows lets only the foreground
+// process change the foreground window, a background macOS app's window
+// cannot become key, and X11 window managers may refuse focus. Windows joins
+// the foreground thread's input queue first, macOS activates the app, and
+// X11 also grabs the keyboard. Safe to call repeatedly; a call that cannot
+// succeed yet (window not mapped) is retried by calling again.
+void takeKeyboardFocus(QWidget *widget);
+
+// Ends the X11 keyboard grab taken by takeKeyboardFocus(). No-op elsewhere.
+void releaseKeyboardFocus(QWidget *widget);
+
 // Linux window managers often ignore WindowStaysOnTopHint for frameless
 // windows. Best effort through wmctrl, xdotool or GNOME Shell.
 void reinforceAlwaysOnTop(const QString &windowTitle);

@@ -101,6 +101,9 @@ EyeTimerApp::EyeTimerApp(QApplication *app, const AppConfig &config, Options opt
     m_trayAvailable = options.createTrayIcon && QSystemTrayIcon::isSystemTrayAvailable();
 
     m_countdown = new CountdownWindow(this);
+    // Often enough that few keys slip through if another app takes focus.
+    m_keyboardTimer.setInterval(250);
+    connect(&m_keyboardTimer, &QTimer::timeout, this, &EyeTimerApp::claimKeyboard);
     if (m_trayAvailable)
         setupTrayIcon();
     if (options.startTimer) {
@@ -302,10 +305,9 @@ void EyeTimerApp::startBreak()
         overlay->raise();
         m_overlays << overlay;
     }
-    if (!m_overlays.isEmpty() && m_overlays.constFirst()) {
-        m_overlays.constFirst()->activateWindow();
-        m_overlays.constFirst()->setFocus();
-    }
+    // Keys typed during the break must not reach the app that was in use.
+    claimKeyboard();
+    m_keyboardTimer.start();
     updateBreakOverlay(m_clock.elapsed());
     updateStatus();
 }
@@ -339,10 +341,37 @@ void EyeTimerApp::finishBreak(bool skipped)
     updateStatus();
 }
 
-void EyeTimerApp::closeOverlays()
+void EyeTimerApp::claimKeyboard()
+{
+    // An open menu (the tray menu) needs the keyboard while it is up.
+    if (QApplication::activePopupWidget())
+        return;
+    // Keep the keyboard on whichever overlay has it (the user may have clicked
+    // another screen's), else give it to the first one.
+    BreakOverlay *target = nullptr;
+    for (const QPointer<BreakOverlay> &overlay : std::as_const(m_overlays)) {
+        if (overlay && (!target || overlay->isActiveWindow()))
+            target = overlay;
+        if (target && target->isActiveWindow())
+            break;
+    }
+    platform::takeKeyboardFocus(target);
+}
+
+void EyeTimerApp::remindHowToSkip()
 {
     for (const QPointer<BreakOverlay> &overlay : std::as_const(m_overlays)) {
+        if (overlay)
+            overlay->shakeSkipButton();
+    }
+}
+
+void EyeTimerApp::closeOverlays()
+{
+    m_keyboardTimer.stop();
+    for (const QPointer<BreakOverlay> &overlay : std::as_const(m_overlays)) {
         if (overlay) {
+            platform::releaseKeyboardFocus(overlay);
             overlay->setAnimated(false);
             overlay->close();
             overlay->deleteLater();
