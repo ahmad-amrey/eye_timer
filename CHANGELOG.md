@@ -11,7 +11,9 @@ X.Y.Z)` in `CMakeLists.txt`. Merging it publishes the release: CI tags the
 merge commit and releases the pull request's build without building again, and
 the section becomes the release notes.
 
-## [Unreleased]
+## [0.11.1] - 2026-11-25
+
+The rest overlay holds the keyboard, and only `Esc` skips the break.
 
 ### Fixed
 - `Esc` skips the break again when another app had the keyboard as the break
